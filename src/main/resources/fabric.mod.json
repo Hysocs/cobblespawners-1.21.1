@@ -1,0 +1,53 @@
+{
+	"schemaVersion": 1,
+	"id": "cobblespawners",
+	"version": "${version}",
+	"name": "cobblespawners",
+	"description": "CobbleSpawners is a Minecraft Fabric mod that offers customizable spawners for cobblemon",
+	"authors": [
+		"Hysocs"
+	],
+	"contact": {
+		"discord": "https://discord.gg/nrENPTmQKt"
+	},
+	"license": "GNU Lesser General Public License v3",
+	"icon": "assets/cobblespawners/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			{
+				"value": "com.cobblespawners.CobbleSpawners",
+				"adapter": "kotlin"
+			}
+		],
+		"client": [
+			{
+				"value": "com.cobblespawners.CobblespawnersClient",
+				"adapter": "kotlin"
+			}
+		],
+		"fabric-datagen": [
+			{
+				"value": "com.cobblespawners.CobblespawnersDataGenerator",
+				"adapter": "kotlin"
+			}
+		]
+	},
+	"mixins": [
+		"cobblespawners.mixins.json",
+		{
+			"config": "cobblespawners.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.14.10",
+		"minecraft": "~1.21.1",
+		"java": ">=21",
+		"fabric-api": "*",
+		"fabric-language-kotlin": "*"
+	},
+	"suggests": {
+		"another-mod": "*"
+	}
+}
