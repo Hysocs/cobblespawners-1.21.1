@@ -17,7 +17,7 @@ import kotlin.reflect.KMutableProperty
 import kotlin.reflect.full.createInstance
 import kotlin.reflect.full.memberProperties
 
-// Data Classes
+
 data class GlobalConfig(
     var debugEnabled: Boolean = false,
     var cullSpawnerPokemonOnServerStop: Boolean = true,
@@ -133,25 +133,29 @@ data class SpawnerData(
     var selectedPokemon: MutableList<PokemonSpawnEntry> = mutableListOf(),
     val dimension: String = "minecraft:overworld",
     var spawnTimerTicks: Long = 200,
-    var spawnRadius: SpawnRadius? = SpawnRadius(), // Nullable to handle JSON deserialization
+    var spawnRadius: SpawnRadius? = SpawnRadius(),
     var spawnLimit: Int = 4,
     var spawnAmountPerSpawn: Int = 1,
     var visible: Boolean = true,
     var lowLevelEntitySpawn: Boolean = false,
-    var wanderingSettings: WanderingSettings? = WanderingSettings() // Nullable to handle JSON deserialization
+    var wanderingSettings: WanderingSettings? = WanderingSettings(),
+    var forceChunkLoading: Boolean = true,
+    var chunkLoadRadius: Int = 1,
+    var requirePlayerInRange: Boolean = true,
+    var playerActivationRange: Int = 30
 )
 
 data class CobbleSpawnersConfigData(
-    override val version: String = "2.0.7",
+    override val version: String = "2.0.9",
     override val configId: String = "cobblespawners",
     var globalConfig: GlobalConfig = GlobalConfig(),
     var spawners: MutableList<SpawnerData> = mutableListOf()
 ) : ConfigData
 
-// Main Configuration Object
+
 object CobbleSpawnersConfig {
     private val logger = LoggerFactory.getLogger("CobbleSpawnersConfig")
-    private const val CURRENT_VERSION = "2.0.7"
+    private const val CURRENT_VERSION = "2.0.9"
     private const val MOD_ID = "cobblespawners"
 
     private lateinit var configManager: ConfigManager<CobbleSpawnersConfigData>
@@ -240,14 +244,14 @@ object CobbleSpawnersConfig {
         spawners.clear()
         lastSpawnTicks.clear()
         for (spawner in config.spawners) {
-            // Manually set defaults for SpawnerData fields
+
             if (spawner.spawnTimerTicks <= 0) spawner.spawnTimerTicks = 200
             if (spawner.spawnRadius == null) spawner.spawnRadius = SpawnRadius()
             if (spawner.spawnLimit <= 0) spawner.spawnLimit = 4
             if (spawner.spawnAmountPerSpawn <= 0) spawner.spawnAmountPerSpawn = 1
             if (spawner.wanderingSettings == null) spawner.wanderingSettings = WanderingSettings()
 
-            // Apply reflection-based defaults to nested objects
+
             spawner.spawnRadius?.let { setNullFieldsToDefaultsForNested(it, SpawnRadius::class) }
             spawner.wanderingSettings?.let { setNullFieldsToDefaultsForNested(it, WanderingSettings::class) }
 
@@ -454,7 +458,11 @@ object CobbleSpawnersConfig {
             spawnLimit = 4,
             spawnAmountPerSpawn = 1,
             visible = true,
-            wanderingSettings = WanderingSettings()
+            wanderingSettings = WanderingSettings(),
+            forceChunkLoading = true,
+            chunkLoadRadius = 1,
+            requirePlayerInRange = true,
+            playerActivationRange = 30
         )
         spawners[spawnerPos] = spawnerData
         config.spawners.add(spawnerData)

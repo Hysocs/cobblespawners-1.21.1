@@ -1,4 +1,3 @@
-// File: CaptureBallSettingsGui.kt
 package com.cobblespawners.utils.gui.pokemonsettings
 
 import com.cobblespawners.utils.CobbleSpawnersConfig
@@ -8,6 +7,7 @@ import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
 import com.cobblemon.mod.common.item.PokeBallItem
 import net.minecraft.component.DataComponentTypes
+import net.minecraft.component.type.LoreComponent
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.registry.Registries
@@ -20,66 +20,42 @@ import java.util.concurrent.ConcurrentHashMap
 object CaptureBallSettingsGui {
     private const val ITEMS_PER_PAGE = 45
     private val playerPages = ConcurrentHashMap<ServerPlayerEntity, Int>()
+    private val availablePokeBalls: List<ItemStack> by lazy {
+        Registries.ITEM.stream()
+            .filter { it is PokeBallItem }
+            .map { ItemStack(it) }
+            .sorted(compareBy { it.name.string })
+            .toList()
+    }
 
-    // GUI slot configuration
     private object Slots {
         const val PREV_PAGE = 45
         const val BACK_BUTTON = 49
         const val NEXT_PAGE = 53
     }
 
-    // Texture constants
     private object Textures {
         const val PREV_PAGE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTMzYWQ1YzIyZGIxNjQzNWRhYWQ2MTU5MGFiYTUxZDkzNzkxNDJkZDU1NmQ2YzQyMmE3MTEwY2EzYWJlYTUwIn19fQ=="
         const val NEXT_PAGE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOGU0MDNjYzdiYmFjNzM2NzBiZDU0M2Y2YjA5NTViYWU3YjhlOTEyM2Q4M2JkNzYwZjYyMDRjNWFmZDhiZTdlMSJ9fX0="
         const val BACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
     }
 
-    /**
-     * Opens the Poké Ball selection GUI for editing selected Poké Balls.
-     */
-    fun openCaptureBallSettingsGui(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        val currentPage = playerPages[player] ?: 0
-        val standardFormName = formName ?: "Standard"
-
-        // Get the Pokémon entry
-        val selectedEntry = CobbleSpawnersConfig.getPokemonSpawnEntry(
-            spawnerPos, pokemonName, standardFormName, additionalAspects
-        )
-
-        if (selectedEntry == null) {
-            player.sendMessage(
-                Text.literal("Pokémon '$pokemonName' with form '$standardFormName' and aspects ${if (additionalAspects.isEmpty()) "none" else additionalAspects.joinToString(", ")} not found in spawner."),
-                false
-            )
+    fun openCaptureBallSettingsGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)
+        if (entry == null) {
+            player.sendMessage(Text.literal("Error: Could not find the specified Pokémon in this spawner."), false)
             return
         }
-
-        val requiredPokeBalls = selectedEntry.captureSettings.requiredPokeBalls
-        val availablePokeballs = getAvailablePokeballs()
-
-        // Build the title including the aspects
-        val aspectsDisplay = if (additionalAspects.isNotEmpty()) additionalAspects.joinToString(", ") else ""
-        val title = if (aspectsDisplay.isNotEmpty())
-            "Select Required Poké Balls for $pokemonName (${selectedEntry.formName ?: "Standard"}, $aspectsDisplay)"
-        else
-            "Select Required Poké Balls for $pokemonName (${selectedEntry.formName ?: "Standard"})"
-
-        // Set the spawner GUI as open
         SpawnerPokemonSelectionGui.spawnerGuisOpen[spawnerPos] = player
 
-        // Open the GUI
+        val aspectsDisplay = if (additionalAspects.isNotEmpty()) ", ${additionalAspects.joinToString(", ")}" else ""
+        val title = "Select Balls for $pokemonName (${entry.formName ?: "Standard"}$aspectsDisplay)"
+
         CustomGui.openGui(
             player,
             title,
-            generateFullGuiLayout(availablePokeballs, requiredPokeBalls, currentPage),
-            { context -> handleButtonClick(context, player, spawnerPos, pokemonName, formName, additionalAspects) },
+            generateFullGuiLayout(entry.captureSettings.requiredPokeBalls, playerPages.getOrDefault(player, 0)),
+            { context -> handleInteraction(context, player, spawnerPos, pokemonName, formName, additionalAspects) },
             {
                 playerPages.remove(player)
                 SpawnerPokemonSelectionGui.spawnerGuisOpen.remove(spawnerPos)
@@ -87,278 +63,99 @@ object CaptureBallSettingsGui {
         )
     }
 
-    /**
-     * Handles button clicks in the GUI.
-     */
-    private fun handleButtonClick(
-        context: InteractionContext,
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        val currentPage = playerPages[player] ?: 0
-        val availablePokeballs = getAvailablePokeballs()
-        val startIndex = currentPage * ITEMS_PER_PAGE
-        val endIndex = minOf(startIndex + ITEMS_PER_PAGE, availablePokeballs.size)
+    private fun handleInteraction(context: InteractionContext, player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val currentPage = playerPages.getOrDefault(player, 0)
+        var needsRefresh = true
 
         when (context.slotIndex) {
-            Slots.PREV_PAGE -> handlePreviousPage(player, spawnerPos, pokemonName, formName, additionalAspects, currentPage)
-            Slots.BACK_BUTTON -> handleBackButton(player, spawnerPos, pokemonName, formName, additionalAspects)
-            Slots.NEXT_PAGE -> handleNextPage(player, spawnerPos, pokemonName, formName, additionalAspects, currentPage, availablePokeballs, endIndex)
-            else -> handlePokeballSelection(context, player, spawnerPos, pokemonName, formName, additionalAspects)
+            Slots.PREV_PAGE -> if (currentPage > 0) playerPages[player] = currentPage - 1
+            Slots.NEXT_PAGE -> if ((currentPage + 1) * ITEMS_PER_PAGE < availablePokeBalls.size) playerPages[player] = currentPage + 1
+            Slots.BACK_BUTTON -> {
+                needsRefresh = false
+                CustomGui.closeGui(player)
+                CaptureSettingsGui.openCaptureSettingsGui(player, spawnerPos, pokemonName, formName, additionalAspects)
+            }
+            in 0 until ITEMS_PER_PAGE -> {
+                val ballName = (context.clickedStack.item as? PokeBallItem)?.let { Registries.ITEM.getId(it).path }
+                if (ballName != null) {
+                    togglePokeballSelection(spawnerPos, pokemonName, formName, additionalAspects, ballName)
+                }
+            }
+            else -> needsRefresh = false
+        }
+
+        if (needsRefresh) {
+            refreshGui(player, spawnerPos, pokemonName, formName, additionalAspects)
         }
     }
 
-    /**
-     * Handles previous page navigation
-     */
-    private fun handlePreviousPage(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>,
-        currentPage: Int
-    ) {
-        if (currentPage > 0) {
-            playerPages[player] = currentPage - 1
-            refreshGuiItems(player, spawnerPos, pokemonName, formName, additionalAspects)
+    private fun togglePokeballSelection(spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>, ballName: String) {
+        CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) { entry ->
+            val requiredBalls = entry.captureSettings.requiredPokeBalls.toMutableList()
+            if (ballName in requiredBalls) {
+                requiredBalls.remove(ballName)
+            } else {
+                requiredBalls.add(ballName)
+            }
+            entry.captureSettings.requiredPokeBalls = requiredBalls
         }
+        CobbleSpawnersConfig.saveSpawnerData()
     }
 
-    /**
-     * Handles next page navigation
-     */
-    private fun handleNextPage(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>,
-        currentPage: Int,
-        availablePokeballs: List<ItemStack>,
-        endIndex: Int
-    ) {
-        if (endIndex < availablePokeballs.size) {
-            playerPages[player] = currentPage + 1
-            refreshGuiItems(player, spawnerPos, pokemonName, formName, additionalAspects)
-        }
-    }
+    private fun generateFullGuiLayout(selectedPokeBalls: List<String>, page: Int): List<ItemStack> {
+        val layout = generatePokeballItemsForGui(selectedPokeBalls, page).toMutableList()
+        val totalPages = (availablePokeBalls.size + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE
 
-    /**
-     * Handles back button click
-     */
-    private fun handleBackButton(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        CustomGui.closeGui(player)
-        CaptureSettingsGui.openCaptureSettingsGui(player, spawnerPos, pokemonName, formName, additionalAspects)
-    }
-
-    /**
-     * Handles Pokéball selection
-     */
-    private fun handlePokeballSelection(
-        context: InteractionContext,
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        val clickedBall = context.clickedStack.item as? PokeBallItem ?: return
-        val ballName = clickedBall.translationKey.split(".").last()
-
-        val selectedEntry = CobbleSpawnersConfig.getPokemonSpawnEntry(
-            spawnerPos,
-            pokemonName,
-            formName ?: "Standard",
-            additionalAspects
-        )
-        val requiredPokeBalls = selectedEntry?.captureSettings?.requiredPokeBalls ?: listOf()
-
-        // Toggle selection state
-        val newPokeBalls = if (ballName in requiredPokeBalls) {
-            removeEnchantmentGlint(context.clickedStack)
-            requiredPokeBalls.minus(ballName)
-        } else {
-            addEnchantmentGlint(context.clickedStack)
-            requiredPokeBalls.plus(ballName)
-        }
-
-        // Update the config - passing additionalAspects
-        CobbleSpawnersConfig.updatePokemonSpawnEntry(
-            spawnerPos,
-            pokemonName,
-            formName,
-            additionalAspects
-        ) { entry ->
-            entry.captureSettings.requiredPokeBalls = newPokeBalls
-        }
-
-        // Refresh the item
-        updateItemLore(context.clickedStack, ballName in newPokeBalls)
-        player.currentScreenHandler.setStackInSlot(context.slotIndex, 0, context.clickedStack)
-        player.currentScreenHandler.sendContentUpdates()
-    }
-
-    /**
-     * Generates the full layout for the GUI, including buttons and Poké Balls.
-     */
-    private fun generateFullGuiLayout(
-        availablePokeballs: List<ItemStack>,
-        selectedPokeBalls: List<String>,
-        page: Int
-    ): List<ItemStack> {
-        val layout = generatePokeballItemsForGui(availablePokeballs, selectedPokeBalls, page).toMutableList()
-
-        // Add navigation buttons
-        layout[Slots.PREV_PAGE] = if (page > 0)
-            createNavigationButton("Previous Page", Formatting.GREEN, "Click to go to the previous page", Textures.PREV_PAGE)
-        else
-            createFillerPane()
-
-        layout[Slots.BACK_BUTTON] = createBackButton()
-
-        layout[Slots.NEXT_PAGE] = if ((page + 1) * ITEMS_PER_PAGE < availablePokeballs.size)
-            createNavigationButton("Next Page", Formatting.GREEN, "Click to go to the next page", Textures.NEXT_PAGE)
-        else
-            createFillerPane()
+        layout[Slots.PREV_PAGE] = if (page > 0) createButton(Text.literal("Previous Page").formatted(Formatting.GREEN), Textures.PREV_PAGE) else createFillerPane()
+        layout[Slots.BACK_BUTTON] = createButton(Text.literal("Back").formatted(Formatting.WHITE), Textures.BACK)
+        layout[Slots.NEXT_PAGE] = if (page < totalPages - 1) createButton(Text.literal("Next Page").formatted(Formatting.GREEN), Textures.NEXT_PAGE) else createFillerPane()
 
         return layout
     }
 
-    /**
-     * Generates the GUI items for Poké Balls.
-     */
-    private fun generatePokeballItemsForGui(
-        availablePokeballs: List<ItemStack>,
-        selectedPokeBalls: List<String>,
-        page: Int
-    ): List<ItemStack> {
+    private fun generatePokeballItemsForGui(selectedPokeBalls: List<String>, page: Int): List<ItemStack> {
         val layout = MutableList(54) { createFillerPane() }
-        val start = page * ITEMS_PER_PAGE
-        val end = minOf(start + ITEMS_PER_PAGE, availablePokeballs.size)
+        val startIndex = page * ITEMS_PER_PAGE
+        val pageItems = availablePokeBalls.drop(startIndex).take(ITEMS_PER_PAGE)
 
-        for (i in start until end) {
-            val pokeball = availablePokeballs[i].copy() // Use a copy to prevent modifying the original
-            val ballName = pokeball.item.translationKey.split(".").last()
+        pageItems.forEachIndexed { index, itemStack ->
+            val ballItem = itemStack.copy()
+            val ballName = (ballItem.item as? PokeBallItem)?.let { Registries.ITEM.getId(it).path } ?: ""
             val isSelected = ballName in selectedPokeBalls
 
-            if (isSelected) {
-                addEnchantmentGlint(pokeball)
-            }
-            updateItemLore(pokeball, isSelected)
-            layout[i - start] = pokeball
-        }
+            val statusText = if (isSelected) Text.literal("Selected").formatted(Formatting.GREEN) else Text.literal("Not Selected").formatted(Formatting.RED)
+            ballItem.set(DataComponentTypes.LORE, LoreComponent(listOf(Text.literal("Status: ").append(statusText))))
 
+            if (isSelected) {
+                ballItem.set(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, true)
+            }
+
+            layout[index] = ballItem
+        }
         return layout
     }
 
-    /**
-     * Refreshes the GUI items without closing the GUI.
-     */
-    private fun refreshGuiItems(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        val selectedEntry = CobbleSpawnersConfig.getPokemonSpawnEntry(
-            spawnerPos,
-            pokemonName,
-            formName ?: "Standard",
-            additionalAspects
-        )
-        val requiredPokeBalls = selectedEntry?.captureSettings?.requiredPokeBalls ?: listOf()
-        val availablePokeballs = getAvailablePokeballs()
-        val currentPage = playerPages[player] ?: 0
-
-        CustomGui.refreshGui(
-            player,
-            generateFullGuiLayout(availablePokeballs, requiredPokeBalls, currentPage)
-        )
+    private fun createButton(title: Text, texture: String, lore: List<Text> = emptyList()): ItemStack {
+        return CustomGui.createPlayerHeadButton(title.string.replace(" ", ""), title, lore, texture)
     }
 
-    /**
-     * Gets all available Poké Balls from the registry.
-     */
-    private fun getAvailablePokeballs(): List<ItemStack> {
-        return Registries.ITEM.stream()
-            .filter { it is PokeBallItem }
-            .map { ItemStack(it) }
-            .toList()
-    }
-
-    /**
-     * Creates a navigation button for the GUI.
-     */
-    private fun createNavigationButton(
-        text: String,
-        color: Formatting,
-        description: String,
-        textureValue: String
-    ): ItemStack {
-        return CustomGui.createPlayerHeadButton(
-            "${text.replace(" ", "")}Button",
-            Text.literal(text).styled { it.withColor(color) },
-            listOf(Text.literal(description).styled { it.withColor(Formatting.GRAY) }),
-            textureValue
-        )
-    }
-
-    /**
-     * Creates a back button for the GUI.
-     */
-    private fun createBackButton(): ItemStack {
-        return CustomGui.createPlayerHeadButton(
-            "BackButton",
-            Text.literal("Back").styled { it.withColor(Formatting.WHITE) },
-            listOf(Text.literal("Return to previous menu").styled { it.withColor(Formatting.GRAY) }),
-            Textures.BACK
-        )
-    }
-
-    /**
-     * Creates a filler pane for empty slots.
-     */
     private fun createFillerPane(): ItemStack {
         return ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply {
             setCustomName(Text.literal(" "))
         }
     }
 
-    /**
-     * Adds an enchantment glint to an ItemStack.
-     */
-    private fun addEnchantmentGlint(itemStack: ItemStack) {
-        itemStack.set(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, true)
-    }
+    private fun refreshGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) ?: return
+        val screenHandler = player.currentScreenHandler ?: return
+        val currentPage = playerPages.getOrDefault(player, 0)
+        val layout = generateFullGuiLayout(entry.captureSettings.requiredPokeBalls, currentPage)
 
-    /**
-     * Removes an enchantment glint from an ItemStack.
-     */
-    private fun removeEnchantmentGlint(itemStack: ItemStack) {
-        itemStack.set(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, false)
-    }
-
-    /**
-     * Updates the lore of an ItemStack to show selection status.
-     */
-    private fun updateItemLore(itemStack: ItemStack, isSelected: Boolean) {
-        val ballName = itemStack.item.translationKey.split(".").last()
-        val lore = listOf(
-            Text.literal("Status: ${if (isSelected) "Selected" else "Not Selected"}").styled {
-                it.withColor(if (isSelected) Formatting.LIGHT_PURPLE else Formatting.RED)
+        layout.forEachIndexed { index, itemStack ->
+            if (index < screenHandler.slots.size) {
+                screenHandler.slots[index].stack = itemStack
             }
-        )
-        CustomGui.setItemLore(itemStack, lore.map { it.string })
+        }
+        screenHandler.sendContentUpdates()
     }
 }

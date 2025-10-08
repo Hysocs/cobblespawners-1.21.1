@@ -1,15 +1,13 @@
-// File: IVSettingsGui.kt
 package com.cobblespawners.utils.gui.pokemonsettings
 
-import com.cobblespawners.utils.*
+import com.cobblespawners.utils.CobbleSpawnersConfig
+import com.cobblespawners.utils.IVSettings
+import com.cobblespawners.utils.PokemonSpawnEntry
+import com.cobblespawners.utils.gui.PokemonEditSubGui
+import com.cobblespawners.utils.gui.SpawnerPokemonSelectionGui.spawnerGuisOpen
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
-import com.everlastingutils.utils.logDebug
-import com.cobblespawners.utils.gui.PokemonEditSubGui
-import com.cobblespawners.utils.gui.SpawnerPokemonSelectionGui
-import com.cobblespawners.utils.gui.SpawnerPokemonSelectionGui.spawnerGuisOpen
-import net.minecraft.inventory.Inventory
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.server.network.ServerPlayerEntity
@@ -17,372 +15,173 @@ import net.minecraft.text.Text
 import net.minecraft.util.ClickType
 import net.minecraft.util.Formatting
 import net.minecraft.util.math.BlockPos
-import org.slf4j.LoggerFactory
 
 object IVSettingsGui {
-    private val logger = LoggerFactory.getLogger(IVSettingsGui::class.java)
 
-    // Slot configuration
-    private const val TOGGLE_CUSTOM_IVS_SLOT = 31
-    private const val BACK_BUTTON_SLOT = 49
+    private object Slots {
+        const val TOGGLE_CUSTOM_IVS = 31
+        const val BACK_BUTTON = 49
+    }
 
-    // Stat button configuration
-    private data class StatButton(
-        val slot: Int,
+    private object Textures {
+        const val HP = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWRiMDJiMDQwYzM3MDE1ODkyYTNhNDNkM2IxYmZkYjJlMDFhMDJlZGNjMmY1YjgyMjUwZGNlYmYzZmY0ZjAxZSJ9fX0="
+        const val ATTACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTFkMzgzNDAxZjc3YmVmZmNiOTk4YzJjZjc5YjdhZmVlMjNmMThjNDFkOGE1NmFmZmVkNzliYjU2ZTIyNjdhMyJ9fX0="
+        const val DEFENSE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjU1NTFmMzRjNDVmYjE4MTFlNGNjMmZhOGVjMzcxZTQ1YmEwOTc3ZTFkMTUyMTEyMGYwZjU3NTYwZjczZjU5MCJ9fX0="
+        const val SP_ATTACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzhmZTcwYjc3MzFhYzJmNWIzZDAyNmViMWFiNmE5MjNhOGM1OGI0YmY2ZDNhY2JlMTQ1YjEwYzM2ZTZjZjg5OCJ9fX0="
+        const val SP_DEFENSE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvN2VhMmI1MTE4MWFlMTlkMzMzMTNjNmY0YThlOTA2NjU3MDU1NzM2MzliM2RmNzA5NTE0YmQ5NzA5ODUzMzBkZCJ9fX0="
+        const val SPEED = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZDcxMDEzODQxNjUyODg4OTgxNTU0OGI0NjIzZDI4ZDg2YmJiYWU1NjE5ZDY5Y2Q5ZGJjNWFkNmI0Mzc0NCJ9fX0="
+        const val TOGGLE_ON = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOTI1YjhlZWQ1YzU2NWJkNDQwZWM0N2M3OWMyMGQ1Y2YzNzAxNjJiMWQ5YjVkZDMxMDBlZDYyODNmZTAxZDZlIn19fQ=="
+        const val TOGGLE_OFF = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNjNmNzliMjA3ZDYxZTEyMjUyM2I4M2Q2MTUwOGQ5OWNmYTA3OWQ0NWJmMjNkZjJhOWE1MTI3ZjkwNzFkNGIwMCJ9fX0="
+        const val BACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
+    }
+
+    private data class StatConfig(
         val name: String,
-        val textureValue: String,
-        val getter: (IVSettings) -> Int,
-        val setter: (IVSettings, Int) -> Unit
+        val texture: String,
+        val minSlot: Int,
+        val maxSlot: Int,
+        val minGetter: (IVSettings) -> Int,
+        val minSetter: (IVSettings, Int) -> Unit,
+        val maxGetter: (IVSettings) -> Int,
+        val maxSetter: (IVSettings, Int) -> Unit
     )
 
-    // Map of stat buttons with their configurations
-    private val statButtons = listOf(
-        StatButton(
-            0, "HP Min",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWRiMDJiMDQwYzM3MDE1ODkyYTNhNDNkM2IxYmZkYjJlMDFhMDJlZGNjMmY1YjgyMjUwZGNlYmYzZmY0ZjAxZSJ9fX0=",
-            { it.minIVHp },
-            { ivs, value -> ivs.minIVHp = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            1, "HP Max",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWRiMDJiMDQwYzM3MDE1ODkyYTNhNDNkM2IxYmZkYjJlMDFhMDJlZGNjMmY1YjgyMjUwZGNlYmYzZmY0ZjAxZSJ9fX0=",
-            { it.maxIVHp },
-            { ivs, value -> ivs.maxIVHp = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            2, "Attack Min",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTFkMzgzNDAxZjc3YmVmZmNiOTk4YzJjZjc5YjdhZmVlMjNmMThjNDFkOGE1NmFmZmVkNzliYjU2ZTIyNjdhMyJ9fX0=",
-            { it.minIVAttack },
-            { ivs, value -> ivs.minIVAttack = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            3, "Attack Max",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTFkMzgzNDAxZjc3YmVmZmNiOTk4YzJjZjc5YjdhZmVlMjNmMThjNDFkOGE1NmFmZmVkNzliYjU2ZTIyNjdhMyJ9fX0=",
-            { it.maxIVAttack },
-            { ivs, value -> ivs.maxIVAttack = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            4, "Defense Min",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjU1NTFmMzRjNDVmYjE4MTFlNGNjMmZhOGVjMzcxZTQ1YmEwOTc3ZTFkMTUyMTEyMGYwZjU3NTYwZjczZjU5MCJ9fX0=",
-            { it.minIVDefense },
-            { ivs, value -> ivs.minIVDefense = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            5, "Defense Max",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjU1NTFmMzRjNDVmYjE4MTFlNGNjMmZhOGVjMzcxZTQ1YmEwOTc3ZTFkMTUyMTEyMGYwZjU3NTYwZjczZjU5MCJ9fX0=",
-            { it.maxIVDefense },
-            { ivs, value -> ivs.maxIVDefense = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            6, "Special Attack Min",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzhmZTcwYjc3MzFhYzJmNWIzZDAyNmViMWFiNmE5MjNhOGM1OGI0YmY2ZDNhY2JlMTQ1YjEwYzM2ZTZjZjg5OCJ9fX0=",
-            { it.minIVSpecialAttack },
-            { ivs, value -> ivs.minIVSpecialAttack = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            7, "Special Attack Max",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzhmZTcwYjc3MzFhYzJmNWIzZDAyNmViMWFiNmE5MjNhOGM1OGI0YmY2ZDNhY2JlMTQ1YjEwYzM2ZTZjZjg5OCJ9fX0=",
-            { it.maxIVSpecialAttack },
-            { ivs, value -> ivs.maxIVSpecialAttack = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            8, "Special Defense Min",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvN2VhMmI1MTE4MWFlMTlkMzMzMTNjNmY0YThlOTA2NjU3MDU1NzM2MzliM2RmNzA5NTE0YmQ5NzA5ODUzMzBkZCJ9fX0=",
-            { it.minIVSpecialDefense },
-            { ivs, value -> ivs.minIVSpecialDefense = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            9, "Special Defense Max",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvN2VhMmI1MTE4MWFlMTlkMzMzMTNjNmY0YThlOTA2NjU3MDU1NzM2MzliM2RmNzA5NTE0YmQ5NzA5ODUzMzBkZCJ9fX0=",
-            { it.maxIVSpecialDefense },
-            { ivs, value -> ivs.maxIVSpecialDefense = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            10, "Speed Min",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZDcxMDEzODQxNjUyODg4OTgxNTU0OGI0NjIzZDI4ZDg2YmJiYWU1NjE5ZDY5Y2Q5ZGJjNWFkNmI0Mzc0NCJ9fX0=",
-            { it.minIVSpeed },
-            { ivs, value -> ivs.minIVSpeed = value.coerceIn(0, 31) }
-        ),
-        StatButton(
-            11, "Speed Max",
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZDcxMDEzODQxNjUyODg4OTgxNTU0OGI0NjIzZDI4ZDg2YmJiYWU1NjE5ZDY5Y2Q5ZGJjNWFkNmI0Mzc0NCJ9fX0=",
-            { it.maxIVSpeed },
-            { ivs, value -> ivs.maxIVSpeed = value.coerceIn(0, 31) }
-        )
+    private val stats = listOf(
+        StatConfig("HP", Textures.HP, 10, 11, { it.minIVHp }, { s, v -> s.minIVHp = v }, { it.maxIVHp }, { s, v -> s.maxIVHp = v }),
+        StatConfig("Attack", Textures.ATTACK, 13, 14, { it.minIVAttack }, { s, v -> s.minIVAttack = v }, { it.maxIVAttack }, { s, v -> s.maxIVAttack = v }),
+        StatConfig("Defense", Textures.DEFENSE, 16, 17, { it.minIVDefense }, { s, v -> s.minIVDefense = v }, { it.maxIVDefense }, { s, v -> s.maxIVDefense = v }),
+        StatConfig("Sp. Atk", Textures.SP_ATTACK, 19, 20, { it.minIVSpecialAttack }, { s, v -> s.minIVSpecialAttack = v }, { it.maxIVSpecialAttack }, { s, v -> s.maxIVSpecialAttack = v }),
+        StatConfig("Sp. Def", Textures.SP_DEFENSE, 22, 23, { it.minIVSpecialDefense }, { s, v -> s.minIVSpecialDefense = v }, { it.maxIVSpecialDefense }, { s, v -> s.maxIVSpecialDefense = v }),
+        StatConfig("Speed", Textures.SPEED, 25, 26, { it.minIVSpeed }, { s, v -> s.minIVSpeed = v }, { it.maxIVSpeed }, { s, v -> s.maxIVSpeed = v })
     )
+    private val statSlots = stats.flatMap { listOf(it.minSlot to it, it.maxSlot to it) }.toMap()
 
-    // Lookup map for stat buttons by slot
-    private val statButtonsBySlot = statButtons.associateBy { it.slot }
-
-    // Lookup map for stat buttons by name
-    private val statButtonsByName = statButtons.associateBy { it.name }
-
-    /**
-     * Opens the IV editor GUI for a specific Pokémon and form.
-     *
-     * @param player The player opening the GUI.
-     * @param spawnerPos The spawner position.
-     * @param pokemonName The Pokémon name.
-     * @param formName The form of the Pokémon (or null for standard).
-     * @param additionalAspects A set of additional aspects (for example, "shiny") to include in display.
-     */
-    fun openIVEditorGui(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
+    fun openIVEditorGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
         val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)
-
         if (entry == null) {
-            player.sendMessage(
-                Text.literal("Pokémon '$pokemonName' with form '${formName ?: "Standard"}' not found in spawner."),
-                false
-            )
+            player.sendMessage(Text.literal("Error: Could not find the specified Pokémon in this spawner."), false)
             return
         }
-
-        val layout = generateIVEditorLayout(entry)
         spawnerGuisOpen[spawnerPos] = player
-
-        // Build the title including the aspects
-        val aspectsDisplay = if (additionalAspects.isNotEmpty()) additionalAspects.joinToString(", ") else ""
-        val guiTitle = if (aspectsDisplay.isNotEmpty())
-            "Edit IVs for ${entry.pokemonName} (${entry.formName ?: "Standard"}, $aspectsDisplay)"
-        else
-            "Edit IVs for ${entry.pokemonName} (${entry.formName ?: "Standard"})"
+        val aspectsDisplay = if (additionalAspects.isNotEmpty()) ", ${additionalAspects.joinToString(", ")}" else ""
+        val guiTitle = "Edit IVs: ${entry.pokemonName} (${entry.formName ?: "Standard"}$aspectsDisplay)"
 
         CustomGui.openGui(
             player,
             guiTitle,
-            layout,
-            { context -> handleInteraction(context, player, spawnerPos, entry.pokemonName, entry.formName, additionalAspects) },
-            { handleClose(it, spawnerPos, entry.pokemonName, entry.formName) }
+            generateIVEditorLayout(entry),
+            { context -> handleInteraction(context, player, spawnerPos, pokemonName, formName, additionalAspects) },
+            { spawnerGuisOpen.remove(spawnerPos) }
         )
     }
 
-    /**
-     * Handles GUI interactions
-     */
-    private fun handleInteraction(
-        context: InteractionContext,
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        val clickedStack = context.clickedStack
-        val clickedName = clickedStack.name?.string ?: ""
-        val slotIndex = context.slotIndex
-
-        // Handle stat buttons
-        statButtonsBySlot[slotIndex]?.let { button ->
-            val delta = when (context.clickType) {
-                ClickType.LEFT -> -1
-                ClickType.RIGHT -> 1
-                else -> 0
+    private fun handleInteraction(context: InteractionContext, player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        when (val slot = context.slotIndex) {
+            Slots.TOGGLE_CUSTOM_IVS -> toggleAllowCustomIvs(spawnerPos, pokemonName, formName, additionalAspects)
+            Slots.BACK_BUTTON -> {
+                CustomGui.closeGui(player)
+                PokemonEditSubGui.openPokemonEditSubGui(player, spawnerPos, pokemonName, formName, additionalAspects)
+                return
             }
-            if (delta != 0) {
-                updateIVValue(spawnerPos, pokemonName, formName, button, delta, player, additionalAspects)
+            in statSlots -> {
+                val stat = statSlots[slot] ?: return
+                val isMin = slot == stat.minSlot
+                val delta = if (context.clickType == ClickType.LEFT) -1 else 1
+                updateIVValue(spawnerPos, pokemonName, formName, additionalAspects, isMin, delta, stat)
             }
-            return
+            else -> return
         }
-
-        // Handle toggle button
-        if (slotIndex == TOGGLE_CUSTOM_IVS_SLOT) {
-            toggleAllowCustomIvs(spawnerPos, pokemonName, formName, player, additionalAspects)
-            return
-        }
-
-        // Handle back button
-        if (slotIndex == BACK_BUTTON_SLOT) {
-            CustomGui.closeGui(player)
-            player.sendMessage(Text.literal("Returning to Edit Pokémon menu"), false)
-            PokemonEditSubGui.openPokemonEditSubGui(
-                player, spawnerPos, pokemonName, formName, additionalAspects
-            )
-        }
+        refreshGui(player, spawnerPos, pokemonName, formName, additionalAspects)
     }
 
-    /**
-     * Handles GUI close
-     */
-    private fun handleClose(
-        inventory: Inventory,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?
-    ) {
-        spawnerGuisOpen.remove(spawnerPos)
-        // No need to send message to player here as the player is probably null at this point
-    }
-
-    /**
-     * Generates the GUI layout for editing IV values.
-     */
     private fun generateIVEditorLayout(entry: PokemonSpawnEntry): List<ItemStack> {
         val layout = MutableList(54) { createFillerPane() }
         val ivSettings = entry.ivSettings
 
-        // Add stat buttons
-        statButtons.forEach { button ->
-            layout[button.slot] = createIVStatButton(button, ivSettings)
+        stats.forEach { stat ->
+            layout[stat.minSlot] = createStatButton("${stat.name} Min", stat.minGetter(ivSettings), stat.texture)
+            layout[stat.maxSlot] = createStatButton("${stat.name} Max", stat.maxGetter(ivSettings), stat.texture)
         }
 
-        // Add toggle and back buttons
-        layout[TOGGLE_CUSTOM_IVS_SLOT] = createToggleCustomIvsButton(ivSettings.allowCustomIvs)
-        layout[BACK_BUTTON_SLOT] = createBackButton()
-
+        layout[Slots.TOGGLE_CUSTOM_IVS] = createToggleButton(ivSettings.allowCustomIvs)
+        layout[Slots.BACK_BUTTON] = createBackButton()
         return layout
     }
 
-    /**
-     * Creates a button for IV stat adjustment
-     */
-    private fun createIVStatButton(button: StatButton, ivSettings: IVSettings): ItemStack {
-        val currentValue = button.getter(ivSettings)
+    private fun updateIVValue(spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>, isMin: Boolean, delta: Int, stat: StatConfig) {
+        CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) { entry ->
+            val ivs = entry.ivSettings
+            if (isMin) {
+                val newValue = (stat.minGetter(ivs) + delta).coerceIn(0, stat.maxGetter(ivs))
+                stat.minSetter(ivs, newValue)
+            } else {
+                val newValue = (stat.maxGetter(ivs) + delta).coerceIn(stat.minGetter(ivs), 31)
+                stat.maxSetter(ivs, newValue)
+            }
+        }
+        CobbleSpawnersConfig.saveSpawnerData()
+    }
 
-        return CustomGui.createPlayerHeadButton(
-            button.name.replace(" ", "") + "Head",
-            Text.literal(button.name).styled { it.withColor(Formatting.WHITE).withBold(true) },
-            listOf(
-                Text.literal("§aCurrent Value:").styled { it.withColor(Formatting.GREEN) },
-                Text.literal("§7Value: §f$currentValue"),
+    private fun toggleAllowCustomIvs(spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) { entry ->
+            entry.ivSettings.allowCustomIvs = !entry.ivSettings.allowCustomIvs
+        }
+        CobbleSpawnersConfig.saveSpawnerData()
+    }
+
+    private fun createStatButton(label: String, value: Int, texture: String): ItemStack {
+        return createButton(
+            title = Text.literal(label).formatted(Formatting.WHITE),
+            lore = listOf(
+                Text.literal("§aCurrent Value: §f$value"),
+                Text.literal(""),
                 Text.literal("§eLeft-click to decrease"),
                 Text.literal("§eRight-click to increase")
             ),
-            button.textureValue
+            texture = texture
         )
     }
 
-    /**
-     * Creates a toggle button for custom IVs.
-     */
-    private fun createToggleCustomIvsButton(isEnabled: Boolean): ItemStack {
-        val textureValue = if (isEnabled) {
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOTI1YjhlZWQ1YzU2NWJkNDQwZWM0N2M3OWMyMGQ1Y2YzNzAxNjJiMWQ5YjVkZDMxMDBlZDYyODNmZTAxZDZlIn19fQ=="
-        } else {
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNjNmNzliMjA3ZDYxZTEyMjUyM2I4M2Q2MTUwOGQ5OWNmYTA3OWQ0NWJmMjNkZjJhOWE1MTI3ZjkwNzFkNGIwMCJ9fX0="
-        }
-
-        return CustomGui.createPlayerHeadButton(
-            "ToggleCustomIVs",
-            Text.literal("Allow Custom IVs: ${if (isEnabled) "ON" else "OFF"}").styled {
-                it.withColor(if (isEnabled) Formatting.GREEN else Formatting.RED).withBold(true)
-            },
-            listOf(Text.literal("§eClick to toggle")),
-            textureValue
+    private fun createToggleButton(enabled: Boolean): ItemStack {
+        val status = if (enabled) "ON" else "OFF"
+        val color = if (enabled) Formatting.GREEN else Formatting.RED
+        return createButton(
+            title = Text.literal("Allow Custom IVs: $status").formatted(color),
+            lore = listOf(
+                Text.literal("§7If ON, these IV ranges will be applied."),
+                Text.literal("§eClick to toggle")
+            ),
+            texture = if (enabled) Textures.TOGGLE_ON else Textures.TOGGLE_OFF
         )
     }
 
-    /**
-     * Creates a Back button.
-     */
     private fun createBackButton(): ItemStack {
-        return CustomGui.createPlayerHeadButton(
-            "BackButton",
-            Text.literal("Back").styled { it.withColor(Formatting.WHITE).withBold(false) },
-            listOf(Text.literal("§7Return to the previous menu")),
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
+        return createButton(
+            title = Text.literal("Back").formatted(Formatting.RED),
+            lore = listOf(Text.literal("§7Return to the previous menu.")),
+            texture = Textures.BACK
         )
     }
 
-    /**
-     * Creates a filler pane.
-     */
+    private fun createButton(title: Text, lore: List<Text>, texture: String): ItemStack {
+        return CustomGui.createPlayerHeadButton(title.string.filter { !it.isWhitespace() }, title, lore, texture)
+    }
+
     private fun createFillerPane(): ItemStack {
         return ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply {
             setCustomName(Text.literal(" "))
         }
     }
 
-    /**
-     * Updates the IV value for a given stat button.
-     */
-    private fun updateIVValue(
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        button: StatButton,
-        delta: Int,
-        player: ServerPlayerEntity,
-        additionalAspects: Set<String> // Add this parameter
-    ) {
-        // Pass additionalAspects to updatePokemonSpawnEntry
-        CobbleSpawnersConfig.updatePokemonSpawnEntry(
-            spawnerPos,
-            pokemonName,
-            formName, // formName is already a String? so this should be fine
-            additionalAspects  // Add this parameter
-        ) { entry ->
-            val iv = entry.ivSettings
-            val currentValue = button.getter(iv)
-            button.setter(iv, currentValue + delta)
-        } ?: run {
-            player.sendMessage(Text.literal("Failed to update IV value."), false)
-            return
+    private fun refreshGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) ?: return
+        val screenHandler = player.currentScreenHandler ?: return
+        val layout = generateIVEditorLayout(entry)
+        layout.forEachIndexed { index, itemStack ->
+            if (index < screenHandler.slots.size) {
+                screenHandler.slots[index].stack = itemStack
+            }
         }
-
-        // Include additionalAspects when retrieving the updated entry
-        CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)?.let { entry ->
-            val updatedButton = createIVStatButton(button, entry.ivSettings)
-            updateSingleItem(player, button.slot, updatedButton)
-
-            logDebug(
-                "Updated IV ${button.name} for ${entry.pokemonName} (${entry.formName ?: "Standard"}) " +
-                        "with aspects ${additionalAspects.joinToString(", ")} at spawner $spawnerPos.",
-                "cobblespawners"
-            )
-        }
-    }
-
-    /**
-     * Toggles the allowCustomIvs flag.
-     */
-    private fun toggleAllowCustomIvs(
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        player: ServerPlayerEntity,
-        additionalAspects: Set<String> // Add this parameter
-    ) {
-        // Pass additionalAspects to updatePokemonSpawnEntry
-        CobbleSpawnersConfig.updatePokemonSpawnEntry(
-            spawnerPos,
-            pokemonName,
-            formName,
-            additionalAspects  // Add this parameter
-        ) { entry ->
-            entry.ivSettings.allowCustomIvs = !entry.ivSettings.allowCustomIvs
-        } ?: run {
-            player.sendMessage(Text.literal("Failed to toggle allowCustomIvs."), false)
-            return
-        }
-
-        // Include additionalAspects when retrieving the updated entry
-        CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)?.let { entry ->
-            val toggleButton = createToggleCustomIvsButton(entry.ivSettings.allowCustomIvs)
-            updateSingleItem(player, TOGGLE_CUSTOM_IVS_SLOT, toggleButton)
-
-            logDebug(
-                "Toggled allowCustomIvs for ${entry.pokemonName} (${entry.formName ?: "Standard"}) " +
-                        "with aspects ${additionalAspects.joinToString(", ")} at spawner $spawnerPos.",
-                "cobblespawners"
-            )
-        }
-    }
-
-
-    /**
-     * Updates a single slot in the GUI
-     */
-    private fun updateSingleItem(player: ServerPlayerEntity, slot: Int, item: ItemStack) {
-        val screenHandler = player.currentScreenHandler
-        if (slot < screenHandler.slots.size) {
-            screenHandler.slots[slot].stack = item
-            screenHandler.sendContentUpdates()
-        }
+        screenHandler.sendContentUpdates()
     }
 }

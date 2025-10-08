@@ -1,624 +1,297 @@
-// File: MovesSettingsGui.kt
 package com.cobblespawners.utils.gui.pokemonsettings
 
 import com.cobblemon.mod.common.api.moves.Moves
 import com.cobblemon.mod.common.api.pokemon.PokemonSpecies
+import com.cobblespawners.utils.CobbleSpawnersConfig
+import com.cobblespawners.utils.LeveledMove
+import com.cobblespawners.utils.MovesSettings
+import com.cobblespawners.utils.PokemonSpawnEntry
+import com.cobblespawners.utils.gui.PokemonEditSubGui
+import com.cobblespawners.utils.gui.SpawnerPokemonSelectionGui.spawnerGuisOpen
 import com.everlastingutils.gui.AnvilGuiManager
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.FullyModularAnvilScreenHandler
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
-import com.cobblespawners.utils.*
-import com.cobblespawners.utils.gui.PokemonEditSubGui
-import com.cobblespawners.utils.gui.SpawnerPokemonSelectionGui.spawnerGuisOpen
-
-import net.minecraft.inventory.Inventory
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.text.Text
 import net.minecraft.util.Formatting
 import net.minecraft.util.math.BlockPos
-import org.slf4j.LoggerFactory
-import java.util.*
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
-import kotlin.math.min
 
 object MovesSettingsGui {
-    private val logger = LoggerFactory.getLogger(MovesSettingsGui::class.java)
 
-    // Track which page the player is viewing
-    private val playerPages = mutableMapOf<ServerPlayerEntity, Int>()
+    private val playerPages = ConcurrentHashMap<ServerPlayerEntity, Int>()
+    private val defaultMovesCache = ConcurrentHashMap<String, List<LeveledMove>>()
 
-    // Cache default moves by Pokémon to avoid repeated lookups
-    private val cachedDefaultMovesByPokemon = mutableMapOf<String, List<LeveledMove>>()
+    private object Slots {
+        const val HELP = 4
+        const val PREV_PAGE = 45
+        const val TOGGLE_CUSTOM_MOVES = 48
+        const val BACK = 49
+        const val ADD_CUSTOM_MOVE = 50
+        const val NEXT_PAGE = 53
+        val MOVE_SLOTS = (9..44).toList()
+        const val MOVES_PER_PAGE = 36
+    }
 
-    // Track current Pokémon name for move validation
-    private var currentPokemonName: String = ""
+    private object Textures {
+        const val BACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
+    }
 
-    // Constants for GUI layout
-    private const val TOGGLE_CUSTOM_MOVES_SLOT = 48 // Bottom left
-    private const val BACK_BUTTON_SLOT = 49 // Bottom center
-    private const val ADD_CUSTOM_MOVE_SLOT = 50 // Bottom middle-right
-    private const val PREVIOUS_PAGE_SLOT = 45 // Bottom left corner
-    private const val NEXT_PAGE_SLOT = 53 // Bottom right corner
-    private const val MOVES_PER_PAGE = 36
-    private const val HELP_BUTTON_SLOT = 4 // Top middle row
-
-    // Move button slots - the middle area of the GUI (rows 1-4, including side slots)
-    private val MOVE_SLOTS = (9..44).toList()
-
-    /**
-     * Opens the Moves Settings GUI, combining selected and available moves
-     */
-    fun openMovesSettingsGui(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>,
-        page: Int = 0
-    ) {
-        val standardFormName = formName ?: "Standard"
-        val effectiveAspects = if (additionalAspects.isEmpty()) {
-            CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, standardFormName)?.aspects ?: emptySet()
-        } else {
-            additionalAspects
+    private object TextContent {
+        fun formatMoveName(moveId: String): String {
+            return moveId.replace("_", " ").replaceFirstChar {
+                if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+            }
         }
+    }
 
-        val selectedEntry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, standardFormName, effectiveAspects)
-        if (selectedEntry == null) {
-            player.sendMessage(
-                Text.literal("Pokémon '$pokemonName' with form '$standardFormName' not found in spawner."),
-                false
-            )
+    fun openMovesSettingsGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)
+        if (entry == null) {
+            player.sendMessage(Text.literal("Error: Could not find the specified Pokémon in this spawner."), false)
             return
         }
 
-        // Initialize moves if it's null
-        if (selectedEntry.moves == null) {
-            selectedEntry.moves = MovesSettings()
-        }
-
-        // Update the current Pokémon name and cache its default moves
-        currentPokemonName = pokemonName
-        if (!cachedDefaultMovesByPokemon.containsKey(pokemonName)) {
-            val species = PokemonSpecies.getByName(pokemonName.lowercase())
-            if (species != null) {
-                cachedDefaultMovesByPokemon[pokemonName] = CobbleSpawnersConfig.getDefaultInitialMoves(species)
-            }
-        }
-
-        playerPages[player] = page
+        cacheDefaultMoves(pokemonName)
+        val page = playerPages.getOrDefault(player, 0)
         spawnerGuisOpen[spawnerPos] = player
 
-        val layout = generateMovesLayout(selectedEntry, page)
-        val aspectsDisplay = if (effectiveAspects.isNotEmpty()) effectiveAspects.joinToString(", ") else ""
-        val guiTitle = if (aspectsDisplay.isNotEmpty())
-            "Moves Settings - $pokemonName (${selectedEntry.formName ?: "Standard"}, $aspectsDisplay)"
-        else
-            "Moves Settings - $pokemonName (${selectedEntry.formName ?: "Standard"})"
+        val aspectsDisplay = if (additionalAspects.isNotEmpty()) ", ${additionalAspects.joinToString(", ")}" else ""
+        val guiTitle = "Edit Moves: ${entry.pokemonName} (${entry.formName ?: "Standard"}$aspectsDisplay)"
 
         CustomGui.openGui(
             player,
             guiTitle,
-            layout,
-            { context -> handleInteraction(context, player, spawnerPos, pokemonName, formName, effectiveAspects) },
-            { handleClose(it, spawnerPos, player) }
+            generateLayout(player, entry, page),
+            { context -> handleInteraction(context, player, spawnerPos, pokemonName, formName, additionalAspects) },
+            {
+                spawnerGuisOpen.remove(spawnerPos)
+                playerPages.remove(player)
+            }
         )
     }
 
-    /**
-     * Generates the layout combining selected moves (paper) and available moves (blue glass)
-     */
-    private fun generateMovesLayout(selectedEntry: PokemonSpawnEntry, page: Int): List<ItemStack> {
-        val layout = MutableList(54) { createFillerPane() }
-
-        // Ensure moves are initialized
-        if (selectedEntry.moves == null) {
-            selectedEntry.moves = MovesSettings()
-        }
-
-        // Add control buttons
-        layout[TOGGLE_CUSTOM_MOVES_SLOT] = createToggleButton(selectedEntry.moves!!.allowCustomInitialMoves)
-        layout[BACK_BUTTON_SLOT] = createBackButton()
-        layout[ADD_CUSTOM_MOVE_SLOT] = createAddCustomMoveButton()
-        layout[HELP_BUTTON_SLOT] = createHelpButton()
-
-        // Get selected and available moves
-        val selectedMoves = selectedEntry.moves!!.selectedMoves
-        val allPossibleMoves = getAllPossibleMoves(selectedEntry.pokemonName)
-        val availableMoves = allPossibleMoves.filterNot { possibleMove ->
-            selectedMoves.any { it.level == possibleMove.level && it.moveId.equals(possibleMove.moveId, ignoreCase = true) }
-        }
-
-        // Combine moves: selected first, then available, sorted by level and name
-        val combinedMoves = (selectedMoves + availableMoves).sortedWith(compareBy<LeveledMove> { it.level }.thenBy { it.moveId })
-        val totalPages = ceil(combinedMoves.size.toDouble() / MOVES_PER_PAGE).toInt()
-
-        // Add pagination buttons
-        if (page > 0) {
-            layout[PREVIOUS_PAGE_SLOT] = createPrevPageButton()
-        }
-        if (page < totalPages - 1 && combinedMoves.isNotEmpty()) {
-            layout[NEXT_PAGE_SLOT] = createNextPageButton()
-        }
-
-        // Populate move slots
-        val startIndex = page * MOVES_PER_PAGE
-        val endIndex = min(startIndex + MOVES_PER_PAGE, combinedMoves.size)
-        if (startIndex < combinedMoves.size) {
-            val pageMoves = combinedMoves.subList(startIndex, endIndex)
-            pageMoves.forEachIndexed { index, moveInfo ->
-                if (index < MOVE_SLOTS.size) {
-                    val isSelected = selectedMoves.any {
-                        it.level == moveInfo.level && it.moveId.equals(moveInfo.moveId, ignoreCase = true)
-                    }
-                    layout[MOVE_SLOTS[index]] = if (isSelected) {
-                        createSelectedMoveButton(moveInfo) // Paper for selected moves
-                    } else {
-                        createAvailableMoveButton(moveInfo) // Blue glass for available moves
-                    }
-                }
+    private fun handleInteraction(context: InteractionContext, player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        var needsRefresh = true
+        when (context.slotIndex) {
+            Slots.HELP -> needsRefresh = false
+            Slots.BACK -> {
+                CustomGui.closeGui(player)
+                PokemonEditSubGui.openPokemonEditSubGui(player, spawnerPos, pokemonName, formName, additionalAspects)
+                needsRefresh = false
             }
+            Slots.ADD_CUSTOM_MOVE -> {
+                openAddCustomMoveAnvil(player, spawnerPos, pokemonName, formName, additionalAspects)
+                needsRefresh = false
+            }
+            Slots.TOGGLE_CUSTOM_MOVES -> toggleCustomMoves(spawnerPos, pokemonName, formName, additionalAspects)
+            Slots.PREV_PAGE -> changePage(player, -1)
+            Slots.NEXT_PAGE -> changePage(player, 1)
+            in Slots.MOVE_SLOTS -> handleMoveClick(context, player, spawnerPos, pokemonName, formName, additionalAspects)
+            else -> needsRefresh = false
+        }
+        if (needsRefresh) {
+            refreshGui(player, spawnerPos, pokemonName, formName, additionalAspects)
+        }
+    }
+
+    private fun generateLayout(player: ServerPlayerEntity, entry: PokemonSpawnEntry, page: Int): List<ItemStack> {
+        val layout = MutableList(54) { createFillerPane() }
+        val movesSettings = entry.moves ?: MovesSettings()
+
+        val combinedMoves = getCombinedMovesForDisplay(entry.pokemonName, movesSettings.selectedMoves)
+        val totalPages = ceil(combinedMoves.size.toDouble() / Slots.MOVES_PER_PAGE).toInt().coerceAtLeast(1)
+        val currentPage = page.coerceIn(0, totalPages - 1)
+        playerPages[player] = currentPage
+
+        layout[Slots.HELP] = createHelpButton()
+        layout[Slots.TOGGLE_CUSTOM_MOVES] = createToggleButton(movesSettings.allowCustomInitialMoves)
+        layout[Slots.BACK] = createBackButton()
+        layout[Slots.ADD_CUSTOM_MOVE] = createAddMoveButton()
+        if (currentPage > 0) layout[Slots.PREV_PAGE] = createNavButton(false)
+        if (currentPage < totalPages - 1) layout[Slots.NEXT_PAGE] = createNavButton(true)
+
+        val startIndex = currentPage * Slots.MOVES_PER_PAGE
+        val pageMoves = combinedMoves.drop(startIndex).take(Slots.MOVES_PER_PAGE)
+
+        pageMoves.forEachIndexed { index, move ->
+            val slot = Slots.MOVE_SLOTS.getOrNull(index) ?: return@forEachIndexed
+            val isSelected = movesSettings.selectedMoves.any { it.level == move.level && it.moveId.equals(move.moveId, true) }
+            layout[slot] = createMoveButton(move, isSelected, entry.pokemonName)
         }
 
         return layout
     }
 
-    /**
-     * Creates a help button explaining how moves work
-     */
-    private fun createHelpButton(): ItemStack {
-        return ItemStack(Items.BOOK).apply {
-            setCustomName(Text.literal("Moves Information").styled { it.withColor(Formatting.GOLD).withBold(true) })
-            val lore = listOf(
-                Text.literal("§7§lHow Moves Work:"),
-                Text.literal(""),
-                Text.literal("§7• Moves are selected from highest level"),
-                Text.literal("§7  down to lowest level, up to 4 moves total."),
-                Text.literal(""),
-                Text.literal("§7• Selected moves (§fpaper§7) will be added"),
-                Text.literal("§7  to spawned Pokémon's movesets."),
-                Text.literal(""),
-                Text.literal("§7• Available moves (§9blue glass§7) can be"),
-                Text.literal("§7  added to the selection."),
-                Text.literal(""),
-                Text.literal("§7• §dForced§7 moves will always be selected"),
-                Text.literal("§7  regardless of level requirements."),
-                Text.literal(""),
-                Text.literal("§7• Right-click a selected move to toggle"),
-                Text.literal("§7  the §dForced§7 status.")
-            )
-            CustomGui.setItemLore(this, lore)
-        }
+    private fun getCombinedMovesForDisplay(pokemonName: String, selectedMoves: List<LeveledMove>): List<LeveledMove> {
+        val defaultMoves = getDefaultMoves(pokemonName)
+        val available = defaultMoves.filterNot { default -> selectedMoves.any { it.moveId.equals(default.moveId, true) } }
+        return (selectedMoves + available).sortedWith(compareBy({ it.level }, { it.moveId }))
     }
 
-    /**
-     * Handles interactions in the Moves Settings GUI
-     */
-    private fun handleInteraction(
-        context: InteractionContext,
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        val slotIndex = context.slotIndex
+    private fun handleMoveClick(context: InteractionContext, player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) ?: return
         val page = playerPages[player] ?: 0
-        val isRightClick = context.button == 1
+        val combinedMoves = getCombinedMovesForDisplay(pokemonName, entry.moves?.selectedMoves ?: emptyList())
+        val clickedIndex = (page * Slots.MOVES_PER_PAGE) + Slots.MOVE_SLOTS.indexOf(context.slotIndex)
+        val move = combinedMoves.getOrNull(clickedIndex) ?: return
 
-        when (slotIndex) {
-            TOGGLE_CUSTOM_MOVES_SLOT -> {
-                CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName, additionalAspects) { entry ->
-                    // Initialize moves if null
-                    if (entry.moves == null) {
-                        entry.moves = MovesSettings()
-                    }
+        CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) { currentEntry ->
+            val settings = currentEntry.moves ?: MovesSettings()
+            val selected = settings.selectedMoves.toMutableList()
+            val existing = selected.find { it.level == move.level && it.moveId.equals(move.moveId, true) }
 
-                    entry.moves = MovesSettings(
-                        allowCustomInitialMoves = !entry.moves!!.allowCustomInitialMoves,
-                        selectedMoves = entry.moves!!.selectedMoves
-                    )
+            if (existing != null) {
+                if (context.button == 1) { // Right-click to toggle forced
+                    val newForcedState = !existing.forced
+                    selected[selected.indexOf(existing)] = existing.copy(forced = newForcedState)
+                } else { // Left-click to remove
+                    selected.remove(existing)
                 }
-                refreshGui(player, spawnerPos, pokemonName, formName, additionalAspects, page)
+            } else { // Not selected, so add it
+                selected.add(move)
             }
-            BACK_BUTTON_SLOT -> {
-                CustomGui.closeGui(player)
-                player.sendMessage(Text.literal("Returning to Edit Pokémon menu."), false)
-                PokemonEditSubGui.openPokemonEditSubGui(player, spawnerPos, pokemonName, formName, additionalAspects)
-            }
-            ADD_CUSTOM_MOVE_SLOT -> {
-                CustomGui.closeGui(player)
-                openAddCustomMoveGui(player, spawnerPos, pokemonName, formName, additionalAspects)
-            }
-            PREVIOUS_PAGE_SLOT -> {
-                if (page > 0) {
-                    playerPages[player] = page - 1
-                    refreshGui(player, spawnerPos, pokemonName, formName, additionalAspects, page - 1)
-                }
-            }
-            NEXT_PAGE_SLOT -> {
-                val selectedEntry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)
-                if (selectedEntry != null) {
-                    // Initialize moves if null
-                    if (selectedEntry.moves == null) {
-                        selectedEntry.moves = MovesSettings()
-                    }
-
-                    val totalMoves = (selectedEntry.moves!!.selectedMoves + getAllPossibleMoves(pokemonName)).distinctBy { it.level to it.moveId }.size
-                    val totalPages = ceil(totalMoves.toDouble() / MOVES_PER_PAGE).toInt()
-                    if (page < totalPages - 1) {
-                        playerPages[player] = page + 1
-                        refreshGui(player, spawnerPos, pokemonName, formName, additionalAspects, page + 1)
-                    }
-                }
-            }
-            in MOVE_SLOTS -> {
-                val selectedEntry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)
-                if (selectedEntry != null) {
-                    // Initialize moves if null
-                    if (selectedEntry.moves == null) {
-                        selectedEntry.moves = MovesSettings()
-                    }
-
-                    val combinedMoves = (selectedEntry.moves!!.selectedMoves + getAllPossibleMoves(pokemonName))
-                        .distinctBy { it.level to it.moveId }
-                        .sortedWith(compareBy<LeveledMove> { it.level }.thenBy { it.moveId })
-                    val startIndex = page * MOVES_PER_PAGE
-                    val endIndex = min(startIndex + MOVES_PER_PAGE, combinedMoves.size)
-                    if (startIndex < combinedMoves.size) {
-                        val pageMoves = combinedMoves.subList(startIndex, endIndex)
-                        val slotPosition = MOVE_SLOTS.indexOf(slotIndex)
-                        if (slotPosition in pageMoves.indices) {
-                            val moveInfo = pageMoves[slotPosition]
-                            val isSelected = selectedEntry.moves!!.selectedMoves.any {
-                                it.level == moveInfo.level && it.moveId.equals(moveInfo.moveId, ignoreCase = true)
-                            }
-                            if (isSelected) {
-                                if (isRightClick) {
-                                    // Toggle forced status
-                                    CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName, additionalAspects) { entry ->
-                                        // Initialize moves if null
-                                        if (entry.moves == null) {
-                                            entry.moves = MovesSettings()
-                                        }
-
-                                        val movesList = entry.moves!!.selectedMoves.toMutableList()
-                                        val idx = movesList.indexOfFirst { it.level == moveInfo.level && it.moveId.equals(moveInfo.moveId, ignoreCase = true) }
-                                        if (idx >= 0) {
-                                            val move = movesList[idx]
-                                            movesList[idx] = LeveledMove(move.level, move.moveId, !move.forced)
-                                            entry.moves = MovesSettings(entry.moves!!.allowCustomInitialMoves, movesList)
-                                            player.sendMessage(
-                                                Text.literal("Set ${moveInfo.moveId.replaceFirstChar {
-                                                    if (it.isLowerCase()) it.titlecase(
-                                                        Locale.getDefault()
-                                                    ) else it.toString()
-                                                }} (Lv. ${moveInfo.level}) to ${if (!move.forced) "forced" else "not forced"} for $pokemonName."),
-                                                false
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    // Remove move
-                                    CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName, additionalAspects) { entry ->
-                                        // Initialize moves if null
-                                        if (entry.moves == null) {
-                                            entry.moves = MovesSettings()
-                                        }
-
-                                        val movesList = entry.moves!!.selectedMoves.toMutableList()
-                                        val idx = movesList.indexOfFirst { it.level == moveInfo.level && it.moveId.equals(moveInfo.moveId, ignoreCase = true) }
-                                        if (idx >= 0) {
-                                            movesList.removeAt(idx)
-                                            entry.moves = MovesSettings(entry.moves!!.allowCustomInitialMoves, movesList)
-                                            player.sendMessage(
-                                                Text.literal("Removed ${moveInfo.moveId.replaceFirstChar {
-                                                    if (it.isLowerCase()) it.titlecase(
-                                                        Locale.getDefault()
-                                                    ) else it.toString()
-                                                }} (Lv. ${moveInfo.level}) from ${pokemonName}'s moveset."),
-                                                false
-                                            )
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Add move
-                                CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName, additionalAspects) { entry ->
-                                    // Initialize moves if null
-                                    if (entry.moves == null) {
-                                        entry.moves = MovesSettings()
-                                    }
-
-                                    val movesList = entry.moves!!.selectedMoves.toMutableList()
-                                    if (!movesList.any { it.level == moveInfo.level && it.moveId.equals(moveInfo.moveId, ignoreCase = true) }) {
-                                        movesList.add(LeveledMove(moveInfo.level, moveInfo.moveId, false))
-                                        entry.moves = MovesSettings(entry.moves!!.allowCustomInitialMoves, movesList)
-                                        player.sendMessage(
-                                            Text.literal("Added ${moveInfo.moveId.replaceFirstChar {
-                                                if (it.isLowerCase()) it.titlecase(
-                                                    Locale.getDefault()
-                                                ) else it.toString()
-                                            }} (Lv. ${moveInfo.level}) to ${pokemonName}'s moveset."),
-                                            false
-                                        )
-                                    }
-                                }
-                            }
-                            refreshGui(player, spawnerPos, pokemonName, formName, additionalAspects, page)
-                        }
-                    }
-                }
-            }
+            currentEntry.moves = settings.copy(selectedMoves = selected)
         }
+        CobbleSpawnersConfig.saveSpawnerData()
     }
 
-    /**
-     * Refreshes the GUI with the current page
-     */
-    private fun refreshGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>, page: Int) {
-        val selectedEntry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)
-        if (selectedEntry != null) {
-            val layout = generateMovesLayout(selectedEntry, page)
-            CustomGui.refreshGui(player, layout)
+    private fun toggleCustomMoves(spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) { entry ->
+            val settings = entry.moves ?: MovesSettings()
+            entry.moves = settings.copy(allowCustomInitialMoves = !settings.allowCustomInitialMoves)
         }
+        CobbleSpawnersConfig.saveSpawnerData()
     }
 
-    /**
-     * Opens the Add Custom Move GUI using the anvil
-     */
-    private fun openAddCustomMoveGui(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        spawnerGuisOpen[spawnerPos] = player
+    private fun changePage(player: ServerPlayerEntity, delta: Int) {
+        val currentPage = playerPages.getOrDefault(player, 0)
+        playerPages[player] = (currentPage + delta).coerceAtLeast(0)
+    }
 
-        val cancelButton = ItemStack(Items.BARRIER).apply {
-            setCustomName(Text.literal("Cancel").styled { it.withColor(Formatting.RED) })
-        }
-        val placeholder = ItemStack(Items.LIGHT_GRAY_STAINED_GLASS_PANE).apply {
-            setCustomName(Text.literal(" "))
-        }
-        val initialOutputButton = ItemStack(Items.PAPER).apply {
-            setCustomName(Text.literal("Type a move name...").styled { it.withColor(Formatting.GRAY) })
-        }
+    private fun openAddCustomMoveAnvil(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val closeAndReopenGui = { player.server.execute { openMovesSettingsGui(player, spawnerPos, pokemonName, formName, additionalAspects) } }
 
         AnvilGuiManager.openAnvilGui(
             player = player,
             id = "add_custom_move_${spawnerPos.toShortString()}",
             title = "Enter Move Name",
             initialText = "",
-            leftItem = cancelButton,
-            rightItem = placeholder,
-            resultItem = initialOutputButton,
-            onLeftClick = { _ ->
-                player.server.execute {
-                    openMovesSettingsGui(player, spawnerPos, pokemonName, formName, additionalAspects, playerPages[player] ?: 0)
-                }
-            },
-            onRightClick = null,
+            leftItem = createButton(ItemStack(Items.BARRIER), Text.literal("Cancel").formatted(Formatting.RED)),
+            resultItem = createButton(ItemStack(Items.PAPER), Text.literal("Type a move name...").formatted(Formatting.GRAY)),
+            onLeftClick = { closeAndReopenGui() },
             onResultClick = { context ->
-                if (context.handler.currentText.isNotBlank()) {
-                    val moveName = context.handler.currentText
-                    val formattedMoveName = moveName.trim().lowercase().replace(Regex("\\s+"), "_")
-                    val moveTemplate = Moves.getByName(formattedMoveName)
-                    if (moveTemplate == null) {
-                        player.sendMessage(Text.literal("§cCouldn't find move: §f$formattedMoveName§c. Please check the spelling."), false)
-                        return@openAnvilGui
-                    }
-
-                    CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName, additionalAspects) { entry ->
-                        // Initialize moves if null
-                        if (entry.moves == null) {
-                            entry.moves = MovesSettings()
-                        }
-
-                        val movesList = entry.moves!!.selectedMoves.toMutableList()
-                        if (!movesList.any { it.moveId.equals(formattedMoveName, ignoreCase = true) }) {
-                            movesList.add(LeveledMove(1, formattedMoveName, false))
-                            entry.moves = MovesSettings(entry.moves!!.allowCustomInitialMoves, movesList)
-                            player.sendMessage(Text.literal("Added custom move ${formattedMoveName.replaceFirstChar {
-                                if (it.isLowerCase()) it.titlecase(
-                                    Locale.getDefault()
-                                ) else it.toString()
-                            }} (Lv. 1) to ${pokemonName}'s moveset."), false)
-                            // Close the anvil GUI and reopen the Moves Settings GUI
-                            player.closeHandledScreen()
-                            player.server.execute {
-                                openMovesSettingsGui(player, spawnerPos, pokemonName, formName, additionalAspects, playerPages[player] ?: 0)
-                            }
-                        } else {
-                            player.sendMessage(Text.literal("§c${formattedMoveName.replaceFirstChar {
-                                if (it.isLowerCase()) it.titlecase(
-                                    Locale.getDefault()
-                                ) else it.toString()
-                            }} is already in the moveset."), false)
+                val moveName = context.handler.currentText.trim().lowercase().replace(Regex("\\s+"), "_")
+                if (moveName.isNotBlank() && Moves.getByName(moveName) != null) {
+                    CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) { entry ->
+                        val settings = entry.moves ?: MovesSettings()
+                        val selected = settings.selectedMoves.toMutableList()
+                        if (selected.none { it.moveId.equals(moveName, true) }) {
+                            selected.add(LeveledMove(1, moveName, false))
+                            entry.moves = settings.copy(selectedMoves = selected)
                         }
                     }
+                    CobbleSpawnersConfig.saveSpawnerData()
+                    closeAndReopenGui()
+                } else {
+                    player.sendMessage(Text.literal("Invalid move name.").formatted(Formatting.RED), false)
                 }
             },
-            onTextChange = { text ->
-                val handler = player.currentScreenHandler as? FullyModularAnvilScreenHandler
-                if (handler != null) {
-                    if (text.isNotBlank()) {
-                        val outputButton = ItemStack(Items.PAPER).apply {
-                            setCustomName(Text.literal("Add: $text").styled { it.withColor(Formatting.GREEN).withBold(true) })
-                            val lore = listOf(
-                                Text.literal("§7Click to add this move"),
-                                Text.literal("§7Level will be set to 1")
-                            )
-                            CustomGui.setItemLore(this, lore)
-                        }
-                        handler.updateSlot(2, outputButton)
-                    } else {
-                        handler.updateSlot(2, initialOutputButton)
-                    }
+            onTextChange = onTextChange@{ text ->
+                val handler = player.currentScreenHandler as? FullyModularAnvilScreenHandler ?: return@onTextChange
+                val button = if (text.isNotBlank()) {
+                    createButton(ItemStack(Items.PAPER), Text.literal("Add: $text").formatted(Formatting.GREEN))
+                } else {
+                    createButton(ItemStack(Items.PAPER), Text.literal("Type a move name...").formatted(Formatting.GRAY))
                 }
+                handler.updateSlot(2, button)
             },
-            onClose = {
-                player.server.execute {
-                    openMovesSettingsGui(player, spawnerPos, pokemonName, formName, additionalAspects, playerPages[player] ?: 0)
-                }
-            }
+            onClose = { closeAndReopenGui() }
         )
     }
 
-    /**
-     * Creates a button for a selected move (paper for default moves, map for custom moves)
-     */
-    private fun createSelectedMoveButton(moveInfo: LeveledMove): ItemStack {
-        val (level, moveId, forced) = moveInfo
-        val displayName = moveId.replace("_", " ").split(" ").joinToString(" ") { it.replaceFirstChar {
-            if (it.isLowerCase()) it.titlecase(
-                Locale.getDefault()
-            ) else it.toString()
-        } }
+    private fun createMoveButton(move: LeveledMove, isSelected: Boolean, pokemonName: String): ItemStack {
+        val name = TextContent.formatMoveName(move.moveId)
+        val isDefault = getDefaultMoves(pokemonName).any { it.moveId.equals(move.moveId, true) }
 
-        // Check if this is a custom move (not in the default list for this Pokémon)
-        val isCustomMove = !isDefaultMove(moveInfo)
-
-        // Use a map for custom moves, paper for default moves
-        val item = ItemStack(if (isCustomMove) Items.FILLED_MAP else Items.PAPER)
-
-        // Add a prefix for custom moves
-        val namePrefix = if (isCustomMove) "§d[Custom] " else "§f"
-        item.setCustomName(Text.literal("$namePrefix$displayName${if (forced) " (Forced)" else ""}").styled { it.withBold(true) })
-
-        val lore = mutableListOf(
-            Text.literal("§7Level: §f$level"),
-            Text.literal("§eLeft-click to remove"),
-            Text.literal("§eRight-click to toggle forced: §f${if (forced) "ON" else "OFF"}")
-        )
-
-        CustomGui.setItemLore(item, lore)
-        return item
-    }
-
-    /**
-     * Checks if a move is in the default moveset for the Pokémon
-     */
-    private fun isDefaultMove(moveInfo: LeveledMove): Boolean {
-        val cachedDefaultMoves = cachedDefaultMovesByPokemon.getOrDefault(currentPokemonName, null)
-        if (cachedDefaultMoves != null) {
-            return cachedDefaultMoves.any { it.moveId.equals(moveInfo.moveId, ignoreCase = true) }
-        }
-
-        // Should never reach here if caching is working properly
-        val species = PokemonSpecies.getByName(currentPokemonName.lowercase()) ?: return false
-        val defaultMoves = CobbleSpawnersConfig.getDefaultInitialMoves(species)
-        return defaultMoves.any { it.moveId.equals(moveInfo.moveId, ignoreCase = true) }
-    }
-
-    /**
-     * Creates a button for an available move (blue glass)
-     */
-    private fun createAvailableMoveButton(moveInfo: LeveledMove): ItemStack {
-        val (level, moveId, _) = moveInfo
-        val displayName = moveId.replace("_", " ").split(" ").joinToString(" ") { it.replaceFirstChar {
-            if (it.isLowerCase()) it.titlecase(
-                Locale.getDefault()
-            ) else it.toString()
-        } }
-        val item = ItemStack(Items.BLUE_STAINED_GLASS_PANE)
-        item.setCustomName(Text.literal("§9$displayName"))
-        val lore = listOf(
-            Text.literal("§7Level: §f$level"),
-            Text.literal("§eClick to add")
-        )
-        CustomGui.setItemLore(item, lore)
-        return item
-    }
-
-    /**
-     * Creates a toggle button for custom moves
-     */
-    private fun createToggleButton(isEnabled: Boolean): ItemStack {
-        return ItemStack(if (isEnabled) Items.LIME_CONCRETE else Items.RED_CONCRETE).apply {
-            setCustomName(
-                Text.literal(if (isEnabled) "Custom Moves: ON" else "Custom Moves: OFF")
-                    .styled { it.withColor(if (isEnabled) Formatting.GREEN else Formatting.RED).withBold(true) }
-            )
-            val lore = listOf(Text.literal("§7Click to ${if (isEnabled) "disable" else "enable"} custom moves"))
-            CustomGui.setItemLore(this, lore)
+        return if (isSelected) {
+            val item = if (isDefault) ItemStack(Items.PAPER) else ItemStack(Items.FILLED_MAP)
+            val prefix = if (!isDefault) "§d[Custom] " else "§f"
+            val suffix = if (move.forced) " §6(Forced)" else ""
+            createButton(item, Text.literal("$prefix$name$suffix"), listOf(
+                Text.literal("§7Level: §f${move.level}"),
+                Text.literal(""),
+                Text.literal("§eLeft-click to remove"),
+                Text.literal("§eRight-click to toggle Forced")
+            ))
+        } else {
+            createButton(ItemStack(Items.BLUE_STAINED_GLASS_PANE), Text.literal(name).formatted(Formatting.AQUA), listOf(
+                Text.literal("§7Level: §f${move.level}"),
+                Text.literal(""),
+                Text.literal("§eClick to add")
+            ))
         }
     }
 
-    /**
-     * Creates an "Add Custom Move" button
-     */
-    private fun createAddCustomMoveButton(): ItemStack {
-        return ItemStack(Items.NAME_TAG).apply {
-            setCustomName(Text.literal("Add Custom Move").styled { it.withColor(Formatting.YELLOW).withBold(true) })
-            val lore = listOf(Text.literal("§7Click to manually enter a move name"))
-            CustomGui.setItemLore(this, lore)
+    private fun createHelpButton() = createButton(ItemStack(Items.BOOK), Text.literal("Help").formatted(Formatting.GOLD), listOf(
+        Text.literal("§7Moves are chosen from highest to lowest level."),
+        Text.literal("§7Up to 4 moves are selected for a spawned Pokémon."),
+        Text.literal("§dForced§7 moves always take priority."),
+        Text.literal("§7Right-click a selected move to toggle §dForced§7 status.")
+    ))
+
+    private fun createToggleButton(enabled: Boolean) = createButton(
+        ItemStack(if (enabled) Items.LIME_CONCRETE else Items.RED_CONCRETE),
+        Text.literal("Custom Moves: ${if (enabled) "ON" else "OFF"}").formatted(if (enabled) Formatting.GREEN else Formatting.RED),
+        listOf(Text.literal("§7Click to toggle custom move selection."))
+    )
+
+    private fun createAddMoveButton() = createButton(
+        ItemStack(Items.WRITABLE_BOOK),
+        Text.literal("Add Custom Move").formatted(Formatting.YELLOW),
+        listOf(Text.literal("§7Manually add a move by name."))
+    )
+
+    private fun createBackButton() = CustomGui.createPlayerHeadButton(
+        "BackButton",
+        Text.literal("Back").formatted(Formatting.RED),
+        listOf(Text.literal("§7Return to the previous menu.")),
+        Textures.BACK
+    )
+
+    private fun createNavButton(isNext: Boolean) = createButton(
+        ItemStack(Items.ARROW),
+        Text.literal(if (isNext) "Next Page" else "Previous Page").formatted(Formatting.WHITE)
+    )
+
+    private fun createFillerPane() = ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply { setCustomName(Text.literal(" ")) }
+
+    private fun createButton(item: ItemStack, title: Text, lore: List<Text> = emptyList()): ItemStack {
+        return item.apply {
+            setCustomName(title)
+            if (lore.isNotEmpty()) CustomGui.setItemLore(this, lore)
         }
     }
 
-    /**
-     * Creates a back button using a player head
-     */
-    private fun createBackButton(): ItemStack {
-        return createBackHead()
-    }
-
-    /**
-     * Creates a back button with a custom player head texture
-     */
-    private fun createBackHead(): ItemStack {
-        return CustomGui.createPlayerHeadButton(
-            "BackButton",
-            Text.literal("Back").styled { it.withColor(Formatting.WHITE) },
-            listOf(Text.literal("§eClick to return")),
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
-        )
-    }
-
-    /**
-     * Creates a previous page button
-     */
-    private fun createPrevPageButton(): ItemStack {
-        return ItemStack(Items.ARROW).apply {
-            setCustomName(Text.literal("Previous Page").styled { it.withColor(Formatting.WHITE) })
+    private fun cacheDefaultMoves(pokemonName: String) {
+        if (!defaultMovesCache.containsKey(pokemonName)) {
+            val species = PokemonSpecies.getByName(pokemonName.lowercase())
+            defaultMovesCache[pokemonName] = species?.let { CobbleSpawnersConfig.getDefaultInitialMoves(it) } ?: emptyList()
         }
     }
 
-    /**
-     * Creates a next page button
-     */
-    private fun createNextPageButton(): ItemStack {
-        return ItemStack(Items.ARROW).apply {
-            setCustomName(Text.literal("Next Page").styled { it.withColor(Formatting.WHITE) })
-        }
-    }
+    private fun getDefaultMoves(pokemonName: String): List<LeveledMove> = defaultMovesCache[pokemonName] ?: emptyList()
 
-    /**
-     * Creates a basic filler pane
-     */
-    private fun createFillerPane(): ItemStack {
-        return ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply {
-            setCustomName(Text.literal(" "))
-        }
-    }
-
-    /**
-     * Gets all possible moves for a Pokémon with their levels
-     */
-    private fun getAllPossibleMoves(pokemonName: String): List<LeveledMove> {
-        val species = PokemonSpecies.getByName(pokemonName.lowercase()) ?: return emptyList()
-        return CobbleSpawnersConfig.getDefaultInitialMoves(species)
-    }
-
-    /**
-     * Handles GUI close event
-     */
-    private fun handleClose(inventory: Inventory, spawnerPos: BlockPos, player: ServerPlayerEntity) {
-        spawnerGuisOpen.remove(spawnerPos)
-        playerPages.remove(player)
+    private fun refreshGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects) ?: return
+        val page = playerPages.getOrDefault(player, 0)
+        val layout = generateLayout(player, entry, page)
+        CustomGui.refreshGui(player, layout)
     }
 }

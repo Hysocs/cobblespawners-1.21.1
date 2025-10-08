@@ -1,4 +1,4 @@
-// File: BattleTracker.kt
+
 package com.cobblespawners.utils
 
 import com.everlastingutils.scheduling.SchedulerManager
@@ -7,6 +7,7 @@ import com.cobblespawners.utils.CobbleSpawnersConfig
 import com.cobblemon.mod.common.api.battles.model.PokemonBattle
 import com.cobblemon.mod.common.api.battles.model.actor.BattleActor
 import com.cobblemon.mod.common.api.events.CobblemonEvents
+//import com.cobblemon.mod.common.api.pokemon.stats.SidemodEvSource
 import com.cobblemon.mod.common.api.pokemon.stats.Stat
 import com.cobblemon.mod.common.api.pokemon.stats.Stats
 import com.cobblemon.mod.common.battles.BattleRegistry
@@ -37,7 +38,7 @@ class BattleTracker {
     data class BattleInfo(
         val battleId: UUID,
         var actors: List<BattleActor>,
-        val participatingPlayerMons: ConcurrentHashMap<UUID, Pokemon> = ConcurrentHashMap(), // Tracks all player Pokémon that participated
+        val participatingPlayerMons: ConcurrentHashMap<UUID, Pokemon> = ConcurrentHashMap(),
         val lastActiveOpponentMon: ConcurrentHashMap<UUID, Pokemon> = ConcurrentHashMap(),
         var isOpponentFromSpawner: Boolean = false,
         var spawnerPos: BlockPos? = null,
@@ -48,7 +49,7 @@ class BattleTracker {
         val startTime: Long = System.currentTimeMillis()
     )
 
-    private val MAX_BATTLE_DURATION = 10 * 60 * 1000 // 10 minutes in milliseconds
+    private val MAX_BATTLE_DURATION = 10 * 60 * 1000
 
     fun registerEvents() {
         CobblemonEvents.BATTLE_STARTED_PRE.subscribe { event ->
@@ -74,9 +75,7 @@ class BattleTracker {
         }
     }
 
-    /**
-     * Starts a scheduler to periodically clean up ended or timed-out battles.
-     */
+
     fun startCleanupScheduler(server: MinecraftServer) {
         val schedulerId = "cobblespawners-battle-cleanup"
         SchedulerManager.scheduleAtFixedRate(
@@ -91,9 +90,7 @@ class BattleTracker {
         logDebug("Started battle cleanup scheduler with ID: $schedulerId", "cobblespawners")
     }
 
-    /**
-     * Cleans up battles that have ended or exceeded the maximum duration.
-     */
+
     private fun cleanupBattles(server: MinecraftServer) {
         val currentTime = System.currentTimeMillis()
         val battlesToCleanup = mutableListOf<UUID>()
@@ -149,8 +146,7 @@ class BattleTracker {
                 logDebug("Player swapped in Pokémon: ${pokemon.species.name}", "cobblespawners")
                 val battleInfo = ongoingBattles[battleId] ?: return
                 synchronized(battleInfo) {
-                    // If there is an existing active Pokémon and it's different from the one being sent in,
-                    // update its baseline EVs before switching.
+
                     battleInfo.currentActivePlayerPokemon?.let { oldPokemon ->
                         if (oldPokemon.uuid != pokemon.uuid) {
                             logDebug("Detected swap: Old Pokémon ${oldPokemon.species.name} (UUID: ${oldPokemon.uuid}) is being swapped out for ${pokemon.species.name} (UUID: ${pokemon.uuid})", "cobblespawners")
@@ -172,7 +168,7 @@ class BattleTracker {
         if (pokemon == null) return logDebug("Player active Pokémon is null, skipping EV save.", "cobblespawners")
         val battleInfo = ongoingBattles[battleId] ?: return
         synchronized(battleInfo) {
-            // Set as current active Pokémon and update baseline EVs
+
             battleInfo.currentActivePlayerPokemon = pokemon
             battleInfo.participatingPlayerMons[pokemon.uuid] = pokemon
             saveOriginalEVs(battleId, pokemon)
@@ -180,10 +176,7 @@ class BattleTracker {
         }
     }
 
-    /**
-     * Handles when an opponent Pokémon is sent into battle, checking if it’s from a spawner
-     * and has custom EVs enabled based on species, form, and aspects (excluding gender).
-     */
+
     private fun handleOpponentActivePokemon(battleId: UUID, pokemon: Pokemon?) {
         if (pokemon == null) return logDebug("Opponent active Pokémon is null, skipping battle logic.", "cobblespawners")
         val battleInfo = ongoingBattles[battleId] ?: return
@@ -204,7 +197,7 @@ class BattleTracker {
                                 battleInfo.lastActiveOpponentMon[pokemon.uuid] = pokemon
                                 battleInfo.isOpponentFromSpawner = true
                                 battleInfo.spawnerPos = spawnerInfo.spawnerPos
-                                // Save EVs for the current player Pokémon if available
+
                                 battleInfo.currentActivePlayerPokemon?.let { playerPokemon ->
                                     logDebug("Saving baseline EVs for current active player's Pokémon before opponent swap: ${playerPokemon.species.name}", "cobblespawners")
                                     saveOriginalEVs(battleId, playerPokemon)
@@ -271,10 +264,7 @@ class BattleTracker {
         }
     }
 
-    /**
-     * Applies custom EVs after a battle victory against a spawner Pokémon.
-     * Now only applies the EV modifications to the currently active (alive) player Pokémon.
-     */
+
     private fun applyValuesAfterBattle(battleId: UUID) {
         val battleInfo = ongoingBattles[battleId] ?: return
         synchronized(battleInfo) {
@@ -300,10 +290,7 @@ class BattleTracker {
         }
     }
 
-    /**
-     * Saves (or updates) the baseline EVs for a Pokémon.
-     * This function now always records the current EVs regardless of whether they were saved before.
-     */
+
     private fun saveOriginalEVs(battleId: UUID, pokemon: Pokemon) {
         val battleInfo = ongoingBattles[battleId] ?: return
         if (!battleInfo.isOpponentFromSpawner) {
@@ -322,9 +309,7 @@ class BattleTracker {
         }
     }
 
-    /**
-     * Applies custom EVs to the player’s Pokémon based on the defeated opponent Pokémon’s details.
-     */
+
     private fun applyCustomEVs(playerPokemon: Pokemon, opponentPokemon: Pokemon, spawnerPos: BlockPos?) {
         if (spawnerPos == null) {
             logDebug("No spawner position available for EV application", "cobblespawners")

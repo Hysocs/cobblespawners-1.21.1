@@ -1,4 +1,4 @@
-// File: ParticleUtils.kt
+
 package com.cobblespawners.utils
 
 import com.cobblespawners.CobbleSpawners
@@ -15,7 +15,7 @@ import java.util.UUID
 object ParticleUtils {
 
     val activeVisualizations = mutableMapOf<UUID, Pair<BlockPos, Long>>()
-    const val visualizationInterval: Long = 10L // Changed to 'const' for better performance
+    const val visualizationInterval: Long = 10L
 
     init {
         ServerPlayConnectionEvents.DISCONNECT.register { handler, _ ->
@@ -31,10 +31,10 @@ object ParticleUtils {
         val blueFlameParticle = ParticleTypes.SOUL_FIRE_FLAME
         val centerPos = spawnerData.spawnerPos
 
-        // Combine all spawn positions from all categories into a single list
+
         val allValidPositions = categorizedPositions.values.flatten()
 
-        // Filter positions based on chunk proximity
+
         val nearbyPositions = allValidPositions.filter { spawnPos ->
             val playerChunkX = player.blockPos.x shr 4
             val playerChunkZ = player.blockPos.z shr 4
@@ -43,7 +43,7 @@ object ParticleUtils {
             kotlin.math.abs(playerChunkX - spawnChunkX) <= 2 && kotlin.math.abs(playerChunkZ - spawnChunkZ) <= 2
         }
 
-        // Send flame particles to the player for each valid spawn position
+
         nearbyPositions.forEach { spawnPos ->
             player.networkHandler.sendPacket(
                 net.minecraft.network.packet.s2c.play.ParticleS2CPacket(
@@ -59,7 +59,7 @@ object ParticleUtils {
             )
         }
 
-        // Render the cube outline around the spawner
+
         renderCubeOutline(
             player,
             blueFlameParticle,
@@ -111,7 +111,7 @@ object ParticleUtils {
             return
         }
 
-        // Check if valid positions are cached; if not, compute and cache them
+
         if (CobbleSpawners.spawnerValidPositions[spawnerPos].isNullOrEmpty()) {
             val serverWorld = player.world as? ServerWorld
             if (serverWorld != null) {

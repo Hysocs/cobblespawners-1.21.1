@@ -1,451 +1,222 @@
-// File: SpawnSettingsGui.kt
 package com.cobblespawners.utils.gui.pokemonsettings
 
+import com.cobblespawners.utils.CobbleSpawnersConfig
+import com.cobblespawners.utils.PokemonSpawnEntry
+import com.cobblespawners.utils.SpawnChanceType
+import com.cobblespawners.utils.gui.PokemonEditSubGui
+import com.cobblespawners.utils.gui.SpawnerPokemonSelectionGui.spawnerGuisOpen
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
-import com.everlastingutils.utils.logDebug
-import com.cobblespawners.utils.*
-import com.cobblespawners.utils.gui.PokemonEditSubGui
-import com.cobblespawners.utils.gui.SpawnerPokemonSelectionGui
-import com.cobblespawners.utils.gui.SpawnerPokemonSelectionGui.spawnerGuisOpen
-import net.minecraft.inventory.Inventory
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.text.Text
+import net.minecraft.util.ClickType
 import net.minecraft.util.Formatting
 import net.minecraft.util.math.BlockPos
-import net.minecraft.util.ClickType
-import org.slf4j.LoggerFactory
 
 object SpawnSettingsGui {
-    private val logger = LoggerFactory.getLogger(SpawnSettingsGui::class.java)
 
-    // Data class for chance buttons
-    data class ChanceButton(
-        val slotIndex: Int,
-        val action: String, // "increase" or "decrease"
-        val leftDelta: Double,
-        val rightDelta: Double
-    )
+    private data class ChanceButton(val slot: Int, val leftDelta: Double, val rightDelta: Double)
+    private data class LevelButton(val slot: Int, val isMin: Boolean, val delta: Int)
 
-    // Define the chance buttons with their respective increments/decrements
-    private val chanceButtonMap = mapOf(
-        // Spawn Chance Buttons
-        10 to ChanceButton(10, "decrease", -0.01, -0.05),
-        11 to ChanceButton(11, "decrease", -0.1, -0.5),
-        12 to ChanceButton(12, "decrease", -1.0, -5.0),
-        14 to ChanceButton(14, "increase", 0.01, 0.05),
-        15 to ChanceButton(15, "increase", 0.1, 0.5),
-        16 to ChanceButton(16, "increase", 1.0, 5.0)
-    )
+    private object Slots {
+        const val SPAWN_CHANCE_DISPLAY = 13
+        const val MIN_LEVEL_DISPLAY = 20
+        const val MAX_LEVEL_DISPLAY = 24
+        const val SPAWN_CHANCE_TYPE_TOGGLE = 31
+        const val BACK_BUTTON = 49
 
-    // Data class for level buttons
-    data class LevelButton(
-        val slotIndex: Int,
-        val isMinLevel: Boolean, // true for Min Level, false for Max Level
-        val action: String // "increase" or "decrease"
-    )
+        val CHANCE_BUTTONS = listOf(
+            ChanceButton(10, -0.01, -0.05),
+            ChanceButton(11, -0.1, -0.5),
+            ChanceButton(12, -1.0, -5.0),
+            ChanceButton(14, 0.01, 0.05),
+            ChanceButton(15, 0.1, 0.5),
+            ChanceButton(16, 1.0, 5.0)
+        ).associateBy { it.slot }
 
-    // Define the level adjustment buttons - MOVED UP ONE ROW
-    private val levelButtonMap = mapOf(
-        // Min Level Adjustment Buttons (moved from row 3 to row 2)
-        19 to LevelButton(19, true, "decrease"),
-        21 to LevelButton(21, true, "increase"),
-        // Max Level Adjustment Buttons (moved from row 3 to row 2)
-        23 to LevelButton(23, false, "decrease"),
-        25 to LevelButton(25, false, "increase")
-    )
-
-    // Display slots for current values and toggle button (rearranged)
-    private object DisplaySlots {
-        const val SPAWN_CHANCE = 13
-        const val SPAWN_CHANCE_TYPE = 31  // Moved down one row
-        const val MIN_LEVEL = 20  // Moved up one row
-        const val MAX_LEVEL = 24  // Moved up one row
-        const val MOVES_EDITOR_BUTTON = 40  // Unchanged
-        const val BACK_BUTTON = 49  // Unchanged
+        val LEVEL_BUTTONS = listOf(
+            LevelButton(19, isMin = true, delta = -1),
+            LevelButton(21, isMin = true, delta = 1),
+            LevelButton(23, isMin = false, delta = -1),
+            LevelButton(25, isMin = false, delta = 1)
+        ).associateBy { it.slot }
     }
 
+    private object Textures {
+        const val DISPLAY = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYjZkZDg5MTlmZThmNzUwN2I0NjQxYmYzYWE3MmIwNTZlMDg1N2NjMjAyYThlNWViNjZjOWMyMWFhNzNjMzg3NiJ9fX0="
+        const val CHANCE_ADJUST = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZjZmZjBhYTQ4NTQ0N2JiOGRjZjQ1OTkyM2I0OWY5MWM0M2IwNDBiZDU2ZTYzMTVkYWE4YjZmODNiNGMzZWI1MSJ9fX0="
+        const val LEVEL_ADJUST = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvN2E4Yjg3ZTQ2Y2ZlOGEyZGMzNTI1YzFjNjdkOGE2OWEyNWZkMGE3ZjcyNGE2ZmE5MTFhZDc0YWRiNmQ4MmMyIn19fQ=="
+        const val TOGGLE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzdkZmE4ZjBjYzkxYjVkODE0YTE4NWM1ZTgwYjVkYzVjYWMxOTgxMTNiMWU5ZWQ4NzM4NmM5OTgzMzk5OWYifX19"
+        const val BACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
+    }
 
-    /**
-     * Opens the Spawn Settings Editor GUI for a specific Pokémon and form.
-     */
-    fun openSpawnShinyEditorGui(
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        val standardFormName = formName ?: "Standard"
-        // Determine effective aspects: if none were provided, fetch from the first matching entry.
-        val effectiveAspects = if (additionalAspects.isEmpty()) {
-            CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, standardFormName)?.aspects ?: emptySet()
-        } else {
-            additionalAspects
-        }
-        val selectedEntry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, standardFormName, effectiveAspects)
-
-        if (selectedEntry == null) {
-            player.sendMessage(
-                Text.literal("Pokémon '$pokemonName' with form '$standardFormName' and aspects " +
-                        "${if (effectiveAspects.isEmpty()) "none" else effectiveAspects.joinToString(", ")} not found in spawner."),
-                false
-            )
-            logDebug("Pokémon '$pokemonName' with form '$standardFormName' with aspects ${effectiveAspects.joinToString(", ")} not found in spawner at $spawnerPos.", "cobblespawners")
+    fun openSpawnShinyEditorGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)
+        if (entry == null) {
+            player.sendMessage(Text.literal("Could not find the specified Pokémon in the spawner."), false)
             return
         }
 
-        val layout = generateSpawnEditorLayout(selectedEntry)
         spawnerGuisOpen[spawnerPos] = player
 
-        val aspectsDisplay = if (effectiveAspects.isNotEmpty()) effectiveAspects.joinToString(", ") else ""
-        val guiTitle = if (aspectsDisplay.isNotEmpty())
-            "Edit Spawn Settings for $pokemonName (${selectedEntry.formName ?: "Standard"}, $aspectsDisplay)"
-        else
-            "Edit Spawn Settings for $pokemonName (${selectedEntry.formName ?: "Standard"})"
+        val aspectsDisplay = if (entry.aspects.isNotEmpty()) ", ${entry.aspects.joinToString(", ")}" else ""
+        val guiTitle = "Edit: ${entry.pokemonName} (${entry.formName ?: "Standard"}$aspectsDisplay)"
 
         CustomGui.openGui(
             player,
             guiTitle,
-            layout,
-            { context -> handleInteraction(context, player, spawnerPos, pokemonName, formName, effectiveAspects) },
-            { handleClose(it, spawnerPos, pokemonName, formName) }
+            generateSpawnEditorLayout(entry),
+            { context -> handleInteraction(context, player, spawnerPos, pokemonName, formName, additionalAspects) },
+            { spawnerGuisOpen.remove(spawnerPos) }
         )
     }
 
-    /**
-     * Handles button interactions in the GUI.
-     */
-    private fun handleInteraction(
-        context: InteractionContext,
-        player: ServerPlayerEntity,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>
-    ) {
-        val slotIndex = context.slotIndex
-        val clickType = context.clickType
-
-        // Handle Chance Buttons
-        chanceButtonMap[slotIndex]?.let { button ->
-            val delta = when (clickType) {
-                ClickType.LEFT -> button.leftDelta
-                ClickType.RIGHT -> button.rightDelta
-                else -> 0.0
+    private fun handleInteraction(context: InteractionContext, player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, additionalAspects: Set<String>) {
+        when (val slot = context.slotIndex) {
+            in Slots.CHANCE_BUTTONS -> {
+                val button = Slots.CHANCE_BUTTONS[slot]!!
+                val delta = if (context.clickType == ClickType.LEFT) button.leftDelta else button.rightDelta
+                adjustSpawnChance(player, spawnerPos, pokemonName, formName, additionalAspects, delta)
             }
-            if (delta != 0.0) {
-                updateSpawnChance(spawnerPos, pokemonName, formName, additionalAspects, delta, player)
+            in Slots.LEVEL_BUTTONS -> {
+                val button = Slots.LEVEL_BUTTONS[slot]!!
+                val delta = if (context.clickType == ClickType.LEFT) button.delta else button.delta * 5
+                adjustLevel(player, spawnerPos, pokemonName, formName, additionalAspects, button.isMin, delta)
             }
-            return
-        }
-
-        // Handle Level Adjustment Buttons
-        levelButtonMap[slotIndex]?.let { button ->
-            val delta = when (clickType) {
-                ClickType.LEFT -> if (button.action == "increase") 1 else -1
-                ClickType.RIGHT -> if (button.action == "increase") 5 else -5
-                else -> 0
+            Slots.SPAWN_CHANCE_TYPE_TOGGLE -> toggleSpawnChanceType(player, spawnerPos, pokemonName, formName, additionalAspects)
+            Slots.BACK_BUTTON -> {
+                CustomGui.closeGui(player)
+                PokemonEditSubGui.openPokemonEditSubGui(player, spawnerPos, pokemonName, formName, additionalAspects)
             }
-            if (delta != 0) {
-                adjustLevel(spawnerPos, pokemonName, formName, additionalAspects, player, button.isMinLevel, delta)
-            }
-            return
-        }
-
-        // Handle Spawn Chance Type Toggle Button
-        if (slotIndex == DisplaySlots.SPAWN_CHANCE_TYPE) {
-            toggleSpawnChanceType(spawnerPos, pokemonName, formName, additionalAspects, player)
-            return
-        }
-
-
-        // Handle Back Button
-        if (slotIndex == DisplaySlots.BACK_BUTTON) {
-            CustomGui.closeGui(player)
-            player.sendMessage(Text.literal("Returning to Edit Pokémon menu"), false)
-            PokemonEditSubGui.openPokemonEditSubGui(player, spawnerPos, pokemonName, formName, additionalAspects)
         }
     }
 
-    /**
-     * Handles GUI close event.
-     */
-    private fun handleClose(
-        inventory: Inventory,
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?
-    ) {
-        spawnerGuisOpen.remove(spawnerPos)
-    }
-
-    /**
-     * Generates the layout for the Spawn Editor GUI.
-     */
-    private fun generateSpawnEditorLayout(selectedEntry: PokemonSpawnEntry): List<ItemStack> {
+    private fun generateSpawnEditorLayout(entry: PokemonSpawnEntry): List<ItemStack> {
         val layout = MutableList(54) { createFillerPane() }
 
-        // Add chance buttons as head items
-        chanceButtonMap.forEach { (slot, button) ->
-            layout[slot] = createChanceButtonHead(button, selectedEntry)
-        }
+        Slots.CHANCE_BUTTONS.values.forEach { layout[it.slot] = createChanceButton(it) }
+        Slots.LEVEL_BUTTONS.values.forEach { layout[it.slot] = createLevelButton(it) }
 
-        // Add level adjustment buttons as head items
-        levelButtonMap.forEach { (slot, button) ->
-            layout[slot] = createLevelAdjustmentHead(button, selectedEntry)
-        }
+        layout[Slots.SPAWN_CHANCE_DISPLAY] = createDisplayItem("Spawn Chance", entry.spawnChance, "%")
+        layout[Slots.MIN_LEVEL_DISPLAY] = createDisplayItem("Min Level", entry.minLevel.toDouble())
+        layout[Slots.MAX_LEVEL_DISPLAY] = createDisplayItem("Max Level", entry.maxLevel.toDouble())
+        layout[Slots.SPAWN_CHANCE_TYPE_TOGGLE] = createToggleSpawnChanceTypeHead(entry)
+        layout[Slots.BACK_BUTTON] = createBackButton()
 
-        // Add current value displays as head items
-        layout[DisplaySlots.SPAWN_CHANCE] = createCurrentValueHead("Current Spawn Chance", "Spawn Chance", selectedEntry.spawnChance, "%")
-        layout[DisplaySlots.MIN_LEVEL] = createCurrentValueHead("Current Min Level", "Min Level", selectedEntry.minLevel.toDouble(), "")
-        layout[DisplaySlots.MAX_LEVEL] = createCurrentValueHead("Current Max Level", "Max Level", selectedEntry.maxLevel.toDouble(), "")
-
-        // Add Toggle Spawn Chance Type button (head item)
-        layout[DisplaySlots.SPAWN_CHANCE_TYPE] = createToggleSpawnChanceTypeHead(selectedEntry)
-
-
-        // Add Back Button as a head item
-        layout[DisplaySlots.BACK_BUTTON] = createBackHead()
-
-        // Fill remaining slots with filler stained glass panes
-        val usedSlots = chanceButtonMap.keys +
-                levelButtonMap.keys +
-                listOf(
-                    DisplaySlots.SPAWN_CHANCE,
-                    DisplaySlots.SPAWN_CHANCE_TYPE,
-                    DisplaySlots.MIN_LEVEL,
-                    DisplaySlots.MAX_LEVEL,
-                    DisplaySlots.MOVES_EDITOR_BUTTON,
-                    DisplaySlots.BACK_BUTTON
-                )
-        for (i in 0 until 54) {
-            if (i !in usedSlots) {
-                layout[i] = createFillerPane()
-            }
-        }
         return layout
     }
 
+    private fun adjustSpawnChance(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, aspects: Set<String>, delta: Double) {
+        CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", aspects) { entry ->
+            entry.spawnChance = (entry.spawnChance + delta).coerceIn(0.0, 100.0)
+        }
+        refreshGui(player, spawnerPos, pokemonName, formName, aspects)
+    }
 
-    /**
-     * Creates a filler pane using a gray stained glass pane.
-     */
+    private fun adjustLevel(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, aspects: Set<String>, isMinLevel: Boolean, delta: Int) {
+        CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", aspects) { entry ->
+            if (isMinLevel) {
+                entry.minLevel = (entry.minLevel + delta).coerceIn(1, entry.maxLevel)
+            } else {
+                entry.maxLevel = (entry.maxLevel + delta).coerceIn(entry.minLevel, 100)
+            }
+        }
+        refreshGui(player, spawnerPos, pokemonName, formName, aspects)
+    }
+
+    private fun toggleSpawnChanceType(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, aspects: Set<String>) {
+        CobbleSpawnersConfig.updatePokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", aspects) { entry ->
+            entry.spawnChanceType = if (entry.spawnChanceType == SpawnChanceType.COMPETITIVE) SpawnChanceType.INDEPENDENT else SpawnChanceType.COMPETITIVE
+        }
+        refreshGui(player, spawnerPos, pokemonName, formName, aspects)
+    }
+
+    private fun refreshGui(player: ServerPlayerEntity, spawnerPos: BlockPos, pokemonName: String, formName: String?, aspects: Set<String>) {
+        val entry = CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", aspects) ?: return
+        val layout = generateSpawnEditorLayout(entry)
+        val screenHandler = player.currentScreenHandler
+        layout.forEachIndexed { index, itemStack ->
+            if (index < screenHandler.slots.size) {
+                screenHandler.slots[index].stack = itemStack
+            }
+        }
+        screenHandler.sendContentUpdates()
+    }
+
+    private fun createDisplayItem(label: String, value: Double, unit: String = ""): ItemStack {
+        val displayValue = if (unit == "%") "%.2f".format(value) else "${value.toInt()}"
+        return CustomGui.createPlayerHeadButton(
+            "Display${label.replace(" ", "")}",
+            Text.literal(label).formatted(Formatting.AQUA),
+            listOf(Text.literal("§f$displayValue$unit")),
+            Textures.DISPLAY
+        )
+    }
+
+    private fun createChanceButton(button: ChanceButton): ItemStack {
+        val signLeft = if (button.leftDelta > 0) "+" else ""
+        val signRight = if (button.rightDelta > 0) "+" else ""
+        val title = if (button.leftDelta > 0) "Increase Spawn Chance" else "Decrease Spawn Chance"
+        return CustomGui.createPlayerHeadButton(
+            "ChanceButton${button.slot}",
+            Text.literal(title).formatted(Formatting.GREEN),
+            listOf(
+                Text.literal("§eLeft-click: $signLeft${"%.2f".format(button.leftDelta)}%"),
+                Text.literal("§eRight-click: $signRight${"%.2f".format(button.rightDelta)}%")
+            ),
+            Textures.CHANCE_ADJUST
+        )
+    }
+
+    private fun createLevelButton(button: LevelButton): ItemStack {
+        val levelType = if (button.isMin) "Min" else "Max"
+        val action = if (button.delta > 0) "Increase" else "Decrease"
+        val title = "$action $levelType Level"
+        return CustomGui.createPlayerHeadButton(
+            "LevelButton${button.slot}",
+            Text.literal(title).formatted(Formatting.GOLD),
+            listOf(
+                Text.literal("§eLeft-click: Adjust by ${button.delta}"),
+                Text.literal("§eRight-click: Adjust by ${button.delta * 5}")
+            ),
+            Textures.LEVEL_ADJUST
+        )
+    }
+
+    private fun createToggleSpawnChanceTypeHead(entry: PokemonSpawnEntry): ItemStack {
+        val typeName = entry.spawnChanceType.name.lowercase().replaceFirstChar { it.uppercase() }
+        val loreText = when (entry.spawnChanceType) {
+            SpawnChanceType.COMPETITIVE -> "Relative to other Pokémon in the spawner."
+            SpawnChanceType.INDEPENDENT -> "Absolute chance, ignores other entries."
+        }
+        return CustomGui.createPlayerHeadButton(
+            "ToggleSpawnChanceType",
+            Text.literal("Spawn Chance Type").formatted(Formatting.LIGHT_PURPLE),
+            listOf(
+                Text.literal("§aCurrent: §f$typeName"),
+                Text.literal("§7$loreText"),
+                Text.literal(""),
+                Text.literal("§eClick to toggle")
+            ),
+            Textures.TOGGLE
+        )
+    }
+
+    private fun createBackButton(): ItemStack {
+        return CustomGui.createPlayerHeadButton(
+            "BackButton",
+            Text.literal("Back").formatted(Formatting.RED),
+            listOf(Text.literal("§7Return to the previous menu.")),
+            Textures.BACK
+        )
+    }
+
     private fun createFillerPane(): ItemStack {
         return ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply {
             setCustomName(Text.literal(" "))
-        }
-    }
-
-    /**
-     * Creates a current value display as a head item.
-     */
-    private fun createCurrentValueHead(title: String, label: String, value: Double, unit: String): ItemStack {
-        val displayValue = if (unit == "%") "%.2f".format(value) else "${value.toInt()}"
-        return CustomGui.createPlayerHeadButton(
-            title.replace(" ", ""),
-            Text.literal(title).styled { it.withColor(Formatting.WHITE).withBold(true) },
-            listOf(Text.literal("§a$label: §f$displayValue$unit")),
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYjZkZDg5MTlmZThmNzUwN2I0NjQxYmYzYWE3MmIwNTZlMDg1N2NjMjAyYThlNWViNjZjOWMyMWFhNzNjMzg3NiJ9fX0="
-        )
-    }
-
-    /**
-     * Creates a Chance Button head item.
-     */
-    private fun createChanceButtonHead(button: ChanceButton, selectedEntry: PokemonSpawnEntry): ItemStack {
-        val (_, action, leftDelta, rightDelta) = button
-        val itemName = "${action.capitalize()} Spawn Chance"
-        val currentChance = selectedEntry.spawnChance
-        return CustomGui.createPlayerHeadButton(
-            "ChanceButton${button.slotIndex}",
-            Text.literal(itemName).styled { it.withColor(Formatting.WHITE).withBold(true) },
-            listOf(
-                Text.literal("§aCurrent Spawn Chance: §f${"%.2f".format(currentChance)}%"),
-                Text.literal("§eLeft-click: ${if (leftDelta > 0) "+" else ""}${"%.2f".format(leftDelta)}%"),
-                Text.literal("§eRight-click: ${if (rightDelta > 0) "+" else ""}${"%.2f".format(rightDelta)}%")
-            ),
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZjZmZjBhYTQ4NTQ0N2JiOGRjZjQ1OTkyM2I0OWY5MWM0M2IwNDBiZDU2ZTYzMTVkYWE4YjZmODNiNGMzZWI1MSJ9fX0="
-        )
-    }
-
-    /**
-     * Creates a Level Adjustment Button head item.
-     */
-    private fun createLevelAdjustmentHead(button: LevelButton, selectedEntry: PokemonSpawnEntry): ItemStack {
-        val (_, isMinLevel, action) = button
-        val levelType = if (isMinLevel) "Min Level" else "Max Level"
-        val itemName = "${action.capitalize()} $levelType"
-        val currentLevel = if (isMinLevel) selectedEntry.minLevel else selectedEntry.maxLevel
-        return CustomGui.createPlayerHeadButton(
-            "LevelButton${button.slotIndex}",
-            Text.literal(itemName).styled { it.withColor(Formatting.WHITE).withBold(true) },
-            listOf(
-                Text.literal("§aCurrent $levelType: §f$currentLevel"),
-                Text.literal("§eLeft-click: Adjust by ${if (action == "increase") "+" else ""}1"),
-                Text.literal("§eRight-click: Adjust by ${if (action == "increase") "+" else ""}5")
-            ),
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvN2E4Yjg3ZTQ2Y2ZlOGEyZGMzNTI1YzFjNjdkOGE2OWEyNWZkMGE3ZjcyNGE2ZmE5MTFhZDc0YWRiNmQ4MmMyIn19fQ=="
-        )
-    }
-
-    /**
-     * Creates the Toggle Spawn Chance Type head item.
-     */
-    private fun createToggleSpawnChanceTypeHead(selectedEntry: PokemonSpawnEntry): ItemStack {
-        val typeName = when (selectedEntry.spawnChanceType) {
-            SpawnChanceType.COMPETITIVE -> "Competitive"
-            SpawnChanceType.INDEPENDENT -> "Independent"
-        }
-        val description = "Competitive: Spawn chance is calculated relative to other entries in the spawner. Independent: Uses an absolute percentage chance regardless of other entries."
-        return CustomGui.createPlayerHeadButton(
-            "ToggleSpawnChanceType",
-            Text.literal("Spawn Chance Type: $typeName").styled { it.withColor(Formatting.WHITE).withBold(true) },
-            listOf(
-                Text.literal("§eClick to toggle chance type"),
-                Text.literal("§7$description")
-            ),
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzdkZmE4ZjBjYzkxYjVkODE0YTE4NWM1ZTgwYjVkYzVjYWMxOTgxMTNiMWU5ZWQ4NzM4NmM5OTgzMzk5OWYifX19"
-        )
-    }
-
-
-
-    /**
-     * Creates the Back Button head item.
-     */
-    private fun createBackHead(): ItemStack {
-        return CustomGui.createPlayerHeadButton(
-            "BackButton",
-            Text.literal("Back").styled { it.withColor(Formatting.WHITE) },
-            listOf(Text.literal("§eClick to return")),
-            "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
-        )
-    }
-
-    /**
-     * Updates the spawn chance value for the selected Pokémon.
-     */
-    private fun updateSpawnChance(
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>,
-        delta: Double,
-        player: ServerPlayerEntity
-    ) {
-        CobbleSpawnersConfig.updatePokemonSpawnEntry(
-            spawnerPos,
-            pokemonName,
-            formName,
-            additionalAspects
-        ) { entry ->
-            entry.spawnChance = (entry.spawnChance + delta).coerceIn(0.0, 100.0)
-        } ?: run {
-            player.sendMessage(Text.literal("Failed to update spawn chance."), false)
-            return
-        }
-
-        CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)?.let { updatedEntry ->
-            updateSingleItem(player, DisplaySlots.SPAWN_CHANCE, createCurrentValueHead("Current Spawn Chance", "Spawn Chance", updatedEntry.spawnChance, "%"))
-            chanceButtonMap.forEach { (slot, button) ->
-                updateSingleItem(player, slot, createChanceButtonHead(button, updatedEntry))
-            }
-            logDebug("Updated spawnChance to ${updatedEntry.spawnChance}% for $pokemonName (${formName ?: "Standard"}) with aspects ${additionalAspects.joinToString(", ")} at spawner $spawnerPos.", "cobblespawners")
-            player.sendMessage(Text.literal("Spawn Chance set to ${"%.2f".format(updatedEntry.spawnChance)}% for $pokemonName."), false)
-        }
-    }
-
-    /**
-     * Toggles the Spawn Chance Type for the selected Pokémon.
-     */
-    private fun toggleSpawnChanceType(
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>,
-        player: ServerPlayerEntity
-    ) {
-        CobbleSpawnersConfig.updatePokemonSpawnEntry(
-            spawnerPos,
-            pokemonName,
-            formName,
-            additionalAspects
-        ) { entry ->
-            entry.spawnChanceType = when (entry.spawnChanceType) {
-                SpawnChanceType.COMPETITIVE -> SpawnChanceType.INDEPENDENT
-                SpawnChanceType.INDEPENDENT -> SpawnChanceType.COMPETITIVE
-            }
-        } ?: run {
-            player.sendMessage(Text.literal("Failed to toggle spawn chance type."), false)
-            return
-        }
-
-        CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)?.let { updatedEntry ->
-            updateSingleItem(player, DisplaySlots.SPAWN_CHANCE_TYPE, createToggleSpawnChanceTypeHead(updatedEntry))
-            logDebug("Toggled spawnChanceType to ${updatedEntry.spawnChanceType} for $pokemonName (${formName ?: "Standard"}) with aspects ${additionalAspects.joinToString(", ")} at spawner $spawnerPos.", "cobblespawners")
-            player.sendMessage(Text.literal("Spawn Chance Type set to ${updatedEntry.spawnChanceType} for $pokemonName."), false)
-        }
-    }
-
-    /**
-     * Adjusts the Min or Max Level.
-     */
-    private fun adjustLevel(
-        spawnerPos: BlockPos,
-        pokemonName: String,
-        formName: String?,
-        additionalAspects: Set<String>,
-        player: ServerPlayerEntity,
-        isMinLevel: Boolean,
-        delta: Int
-    ) {
-        CobbleSpawnersConfig.updatePokemonSpawnEntry(
-            spawnerPos,
-            pokemonName,
-            formName,
-            additionalAspects
-        ) { entry ->
-            if (isMinLevel) {
-                val newMin = (entry.minLevel + delta).coerceAtLeast(1).coerceAtMost(entry.maxLevel)
-                entry.minLevel = newMin
-            } else {
-                val newMax = (entry.maxLevel + delta).coerceAtLeast(entry.minLevel).coerceAtMost(100)
-                entry.maxLevel = newMax
-            }
-        } ?: run {
-            player.sendMessage(Text.literal("Failed to adjust level."), false)
-            return
-        }
-
-        CobbleSpawnersConfig.getPokemonSpawnEntry(spawnerPos, pokemonName, formName ?: "Standard", additionalAspects)?.let { updatedEntry ->
-            val displaySlot = if (isMinLevel) DisplaySlots.MIN_LEVEL else DisplaySlots.MAX_LEVEL
-            val displayValue = if (isMinLevel) updatedEntry.minLevel.toDouble() else updatedEntry.maxLevel.toDouble()
-            val displayType = if (isMinLevel) "Min Level" else "Max Level"
-            updateSingleItem(player, displaySlot, createCurrentValueHead("Current $displayType", displayType, displayValue, ""))
-            levelButtonMap.filter { it.value.isMinLevel == isMinLevel }.forEach { (slot, button) ->
-                updateSingleItem(player, slot, createLevelAdjustmentHead(button, updatedEntry))
-            }
-            logger.info(
-                "Adjusted ${if (isMinLevel) "min" else "max"} level for $pokemonName (${updatedEntry.formName ?: "Standard"}) " +
-                        "with aspects ${additionalAspects.joinToString(", ")} at spawner $spawnerPos to " +
-                        "${if (isMinLevel) updatedEntry.minLevel else updatedEntry.maxLevel}."
-            )
-            player.sendMessage(Text.literal("Set ${if (isMinLevel) "Min" else "Max"} Level to ${if (isMinLevel) updatedEntry.minLevel else updatedEntry.maxLevel} for $pokemonName."), false)
-        }
-    }
-
-    /**
-     * Updates a single slot in the GUI.
-     */
-    private fun updateSingleItem(player: ServerPlayerEntity, slot: Int, item: ItemStack) {
-        val screenHandler = player.currentScreenHandler
-        if (slot < screenHandler.slots.size) {
-            screenHandler.slots[slot].stack = item
-            screenHandler.sendContentUpdates()
         }
     }
 }

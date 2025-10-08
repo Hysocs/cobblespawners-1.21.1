@@ -18,9 +18,11 @@ import net.minecraft.item.Items
 import net.minecraft.registry.RegistryKey
 import net.minecraft.registry.RegistryKeys
 import net.minecraft.server.MinecraftServer
+import net.minecraft.server.world.ChunkTicketType
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.util.Identifier
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.ChunkPos
 import net.minecraft.util.math.Vec3d
 import net.minecraft.util.math.random.Random
 import net.minecraft.world.World
@@ -41,19 +43,18 @@ object CobbleSpawners : ModInitializer {
 	private val battleTracker = BattleTracker()
 	private val catchingTracker = CatchingTracker()
 
-	// Cache of valid positions for each spawner, keyed by spawner's BlockPos.
-	val spawnerValidPositions = ConcurrentHashMap<BlockPos, Map<String, List<BlockPos>>>()
 
-	// Added: Store scheduler reference to shut it down on server stop.
+	val spawnerValidPositions = ConcurrentHashMap<BlockPos, Map<String, List<BlockPos>>>()
+    val SPAWNER_TICKET_TYPE: ChunkTicketType<BlockPos> = ChunkTicketType.create("cobblespawners:spawner_ticket", Comparator.comparingLong(BlockPos::asLong))
 	private var spawnScheduler: ScheduledExecutorService? = null
 
 	override fun onInitialize() {
 		logger.info("Initializing CobbleSpawners")
 
-		// Load configuration and spawner data
+
 		CobbleSpawnersConfig.initializeAndLoad()
 
-		// Register commands and event listeners
+
 		CommandRegistrar.registerCommands()
 		battleTracker.registerEvents()
 		catchingTracker.registerEvents()
@@ -61,32 +62,46 @@ object CobbleSpawners : ModInitializer {
 
 		registerServerLifecycleEvents()
 
-		// Instead of using ServerTickEvents, schedule a recurring task using system time.
-		ServerLifecycleEvents.SERVER_STARTED.register { server ->
-			registerSpawnScheduler(server)
-			battleTracker.startCleanupScheduler(server)
-		}
+
+        ServerLifecycleEvents.SERVER_STARTED.register { server ->
+            registerSpawnScheduler(server)
+            battleTracker.startCleanupScheduler(server)
+
+            logDebug("Applying chunk tickets for spawners with forceChunkLoading enabled...", "cobblespawners")
+            CobbleSpawnersConfig.spawners.forEach { (pos, data) ->
+
+                if (data.forceChunkLoading) {
+                    val worldKey = parseDimension(data.dimension)
+                    server.getWorld(worldKey)?.let { world ->
+                        val chunkPos = ChunkPos(pos)
+
+                        world.chunkManager.addTicket(SPAWNER_TICKET_TYPE, chunkPos, data.chunkLoadRadius, pos)
+                    }
+                }
+            }
+            logDebug("Finished applying chunk tickets.", "cobblespawners")
+        }
 
 		ServerEntityEvents.ENTITY_LOAD.register { entity, world ->
 			if (entity is PokemonEntity) {
 				val spawnerInfo = SpawnerNBTManager.getPokemonInfo(entity)
 				if (spawnerInfo != null) {
-					// Use getSpawner which returns nullable SpawnerData
+
 					val spawnerData = CobbleSpawnersConfig.getSpawner(spawnerInfo.spawnerPos)
-					// Safely access wanderingSettings using ?. let
+
 					spawnerData?.wanderingSettings?.let { wanderingSettings ->
-						if (wanderingSettings.enabled) { // Check if enabled
+						if (wanderingSettings.enabled) {
 							val goalSelector = (entity as MobEntityAccessor).getGoalSelector()
 							val alreadyHasWander = goalSelector.goals.any { it.goal is WanderBackToSpawnerGoal }
 							if (!alreadyHasWander) {
 								val wanderGoal = WanderBackToSpawnerGoal(
 									entity,
 									Vec3d.ofCenter(spawnerInfo.spawnerPos),
-									1.0, // Speed
-									wanderingSettings // Pass the whole settings object
-									// tickDelay defaults to 10
+									1.0,
+									wanderingSettings
+
 								)
-								goalSelector.add(0, wanderGoal) // Priority 0 is high
+								goalSelector.add(0, wanderGoal)
 							}
 						}
 					}
@@ -105,7 +120,7 @@ object CobbleSpawners : ModInitializer {
 					server.getWorld(worldKey)?.let { cullSpawnerPokemon(it, pos) }
 				}
 			}
-			// Added: Shut down the scheduler to ensure it doesn't linger.
+
 			spawnScheduler?.shutdownNow()
 			spawnScheduler = null
 		}
@@ -121,71 +136,83 @@ object CobbleSpawners : ModInitializer {
 		}
 	}
 
-	/**
-	 * Instead of using ServerTickEvents, this schedules a recurring task based on system time.
-	 * The spawn delay is computed by converting the configured spawnTimerTicks (ticks) to milliseconds.
-	 */
+
 	private fun registerSpawnScheduler(server: MinecraftServer) {
 		spawnScheduler = Executors.newSingleThreadScheduledExecutor()
 		spawnScheduler?.scheduleAtFixedRate({
-			// Ensure we run spawn logic on the main server thread.
+
 			server.executeSync {
 				processSpawnerSpawns(server)
 			}
 		}, 0, 1000, TimeUnit.MILLISECONDS)
 	}
 
-	private fun processSpawnerSpawns(server: MinecraftServer) {
-		val currentTime = System.currentTimeMillis()
-		logDebug("processSpawnerSpawns: currentTime = $currentTime", "cobblespawners")
+    private fun processSpawnerSpawns(server: MinecraftServer) {
+        val currentTime = System.currentTimeMillis()
+        logDebug("processSpawnerSpawns: currentTime = $currentTime", "cobblespawners")
 
-		for ((pos, data) in CobbleSpawnersConfig.spawners) {
-			val dimensionKey = parseDimension(data.dimension)
-			val world = server.getWorld(dimensionKey)
-			if (world == null) {
-				logDebug("processSpawnerSpawns: world is null for spawner at $pos with dimension ${data.dimension}", "cobblespawners")
-				continue
-			}
-			if (world.getChunk(pos.x shr 4, pos.z shr 4, ChunkStatus.FULL, false) == null) {
-				logDebug("processSpawnerSpawns: chunk not loaded for spawner '${data.spawnerName}' at $pos", "cobblespawners")
-				continue
-			}
+        for ((pos, data) in CobbleSpawnersConfig.spawners) {
+            val dimensionKey = parseDimension(data.dimension)
+            val world = server.getWorld(dimensionKey)
+            if (world == null) {
+                logDebug("processSpawnerSpawns: world is null for spawner at $pos with dimension ${data.dimension}", "cobblespawners")
+                continue
+            }
+            if (world.getChunk(pos.x shr 4, pos.z shr 4, ChunkStatus.FULL, false) == null) {
+                logDebug("processSpawnerSpawns: chunk not loaded for spawner '${data.spawnerName}' at $pos", "cobblespawners")
+                continue
+            }
 
-			val spawnDelayMillis = data.spawnTimerTicks * 50
-			var lastSpawnTime = CobbleSpawnersConfig.lastSpawnTicks[pos]
-			if (lastSpawnTime == null) {
-				// Initialize lastSpawnTime so that the spawner waits for the delay from now on.
-				lastSpawnTime = currentTime
-				CobbleSpawnersConfig.lastSpawnTicks[pos] = lastSpawnTime
-				logDebug("processSpawnerSpawns: initializing lastSpawnTime for spawner at $pos to $currentTime", "cobblespawners")
-				continue
-			}
+            if (data.requirePlayerInRange) {
+                var isPlayerNearby = false
+                val activationRangeSq = (data.playerActivationRange * data.playerActivationRange).toDouble()
+                for (player in world.players) {
+                    if (player.squaredDistanceTo(pos.toCenterPos()) <= activationRangeSq) {
+                        isPlayerNearby = true
+                        break
+                    }
+                }
+                if (!isPlayerNearby) {
 
-			logDebug("processSpawnerSpawns: spawner at $pos, lastSpawnTime = $lastSpawnTime, spawnDelayMillis = $spawnDelayMillis", "cobblespawners")
+                    CobbleSpawnersConfig.lastSpawnTicks.remove(pos)
+                    logDebug("Skipping spawner '${data.spawnerName}' at $pos and resetting timer, no players in range.", "cobblespawners")
+                    continue
+                }
+            }
 
-			// Check if the spawn delay has elapsed
-			if (currentTime < lastSpawnTime + spawnDelayMillis) {
-				logDebug("processSpawnerSpawns: spawn delay not elapsed for spawner at $pos", "cobblespawners")
-				continue
-			}
-			// Check if the spawner GUI is closed
-			if (SpawnerPokemonSelectionGui.isSpawnerGuiOpen(pos)) {
-				logDebug("processSpawnerSpawns: spawner GUI is open for spawner at $pos", "cobblespawners")
-				continue
-			}
+            val spawnDelayMillis = data.spawnTimerTicks * 50
+            var lastSpawnTime = CobbleSpawnersConfig.lastSpawnTicks[pos]
 
-			val currentCount = SpawnerNBTManager.getPokemonCountForSpawner(world, pos)
-			logDebug("processSpawnerSpawns: current Pokemon count = $currentCount for spawner at $pos (limit: ${data.spawnLimit})", "cobblespawners")
-			if (currentCount < data.spawnLimit) {
-				logDebug("processSpawnerSpawns: Spawning Pokémon at spawner '${data.spawnerName}' at $pos", "cobblespawners")
-				spawnPokemon(world, data)
-				// Update the last spawn time only when a spawn occurs.
-				CobbleSpawnersConfig.lastSpawnTicks[pos] = currentTime
-			} else {
-				logDebug("processSpawnerSpawns: Spawn limit reached for spawner '${data.spawnerName}' at $pos", "cobblespawners")
-			}
-		}
-	}
+
+            if (lastSpawnTime == null) {
+                lastSpawnTime = currentTime
+                CobbleSpawnersConfig.lastSpawnTicks[pos] = lastSpawnTime
+                logDebug("processSpawnerSpawns: initializing/resetting lastSpawnTime for spawner at $pos to $currentTime", "cobblespawners")
+                continue
+            }
+
+            logDebug("processSpawnerSpawns: spawner at $pos, lastSpawnTime = $lastSpawnTime, spawnDelayMillis = $spawnDelayMillis", "cobblespawners")
+
+            if (currentTime < lastSpawnTime + spawnDelayMillis) {
+                logDebug("processSpawnerSpawns: spawn delay not elapsed for spawner at $pos", "cobblespawners")
+                continue
+            }
+            if (SpawnerPokemonSelectionGui.isSpawnerGuiOpen(pos)) {
+                logDebug("processSpawnerSpawns: spawner GUI is open for spawner at $pos", "cobblespawners")
+                continue
+            }
+
+            val currentCount = SpawnerNBTManager.getPokemonCountForSpawner(world, pos)
+            logDebug("processSpawnerSpawns: current Pokemon count = $currentCount for spawner at $pos (limit: ${data.spawnLimit})", "cobblespawners")
+            if (currentCount < data.spawnLimit) {
+                logDebug("processSpawnerSpawns: Spawning Pokémon at spawner '${data.spawnerName}' at $pos", "cobblespawners")
+                spawnPokemon(world, data)
+                CobbleSpawnersConfig.lastSpawnTicks[pos] = currentTime
+            } else {
+                logDebug("processSpawnerSpawns: Spawn limit reached for spawner '${data.spawnerName}' at $pos", "cobblespawners")
+            }
+        }
+    }
 
 	private fun spawnPokemon(serverWorld: ServerWorld, spawnerData: SpawnerData) {
 		val spawnerPos = spawnerData.spawnerPos
@@ -200,7 +227,7 @@ object CobbleSpawners : ModInitializer {
 			return
 		}
 
-		// Added check: ensure the spawner's own chunk is still loaded.
+
 		if (serverWorld.getChunk(spawnerPos.x shr 4, spawnerPos.z shr 4, ChunkStatus.FULL, false) == null) {
 			logDebug("spawnPokemon: spawner chunk not loaded for spawner at $spawnerPos, aborting spawn.", "cobblespawners")
 			return
@@ -249,7 +276,7 @@ object CobbleSpawners : ModInitializer {
 
 			if (validPositionsForType.isEmpty()) return@repeat
 
-			// Filter the list to only include positions whose chunks are loaded.
+
 			val loadedPositions = validPositionsForType.filter { pos ->
 				serverWorld.getChunk(pos.x shr 4, pos.z shr 4, ChunkStatus.FULL, false) != null
 			}
@@ -259,12 +286,12 @@ object CobbleSpawners : ModInitializer {
 				return@repeat
 			}
 
-			// Pick a random loaded spawn position.
+
 			val spawnPos = loadedPositions[random.nextInt(loadedPositions.size)]
 
 
 
-			// Forcefully spawn the Pokémon without regard to claim protections.
+
 			if (attemptSpawnSinglePokemon(serverWorld, spawnPos, picked, spawnerPos, spawnerData.lowLevelEntitySpawn)) {
 				spawnedCount++
 			}
@@ -274,11 +301,6 @@ object CobbleSpawners : ModInitializer {
 		if (spawnedCount > 0) {
 			logDebug("Spawned $spawnedCount Pokémon(s) for '${spawnerData.spawnerName}' at $spawnerPos", "cobblespawners")
 		}
-	}
-
-	fun getWorldUUID(serverWorld: ServerWorld): UUID {
-		// Create a UUID based on the world’s registry key, which uniquely identifies the world
-		return UUID.nameUUIDFromBytes(serverWorld.registryKey.value.toString().toByteArray())
 	}
 
 	private fun attemptSpawnSinglePokemon(
@@ -300,46 +322,44 @@ object CobbleSpawners : ModInitializer {
 		val pokemonEntity = properties.createEntity(serverWorld)
 		val pokemon = pokemonEntity.pokemon
 
-		// Safely handle moves being null
+
 		val moves = entry.moves ?: MovesSettings()
 
 		if (moves.allowCustomInitialMoves) {
-			// Clear the default moveset
+
 			pokemon.moveSet.clear()
 
-			// First collect any forced moves
+
 			val forcedMoves = moves.selectedMoves
 				.filter { it.forced }
 				.map { it.moveId }
 
-			// Calculate remaining move slots after forced moves
+
 			val remainingSlots = 4 - forcedMoves.size
 			val selectedMoves = forcedMoves.toMutableList()
 
-			// Only add non-forced moves if we have slots left
+
 			if (remainingSlots > 0) {
-				// Get eligible non-forced moves (level <= Pokemon's level)
+
 				val eligibleMoves = moves.selectedMoves
 					.filter { !it.forced && it.level <= level }
 
-				// Group moves by level
-				val movesByLevel = eligibleMoves.groupBy { it.level }
-					.toSortedMap(compareByDescending { it }) // Sort by level descending
 
-				// Process each level group to fill remaining slots
+				val movesByLevel = eligibleMoves.groupBy { it.level }
+					.toSortedMap(compareByDescending { it })
+
+
 				for ((_, movesAtLevel) in movesByLevel) {
 					if (selectedMoves.size >= 4) break
 
-					// Add moves for this level in original order
+
 					val movesToAdd = minOf(4 - selectedMoves.size, movesAtLevel.size)
 
-					// For the lowest level (level 1), we want to prioritize the later moves in the list
-					// For other levels, we keep the original order
 					val selectedMovesForLevel = if (movesAtLevel.firstOrNull()?.level == 1) {
-						// Take the last movesToAdd entries
+
 						movesAtLevel.takeLast(movesToAdd)
 					} else {
-						// Take the first movesToAdd entries
+
 						movesAtLevel.take(movesToAdd)
 					}
 
@@ -347,13 +367,12 @@ object CobbleSpawners : ModInitializer {
 				}
 			}
 
-			// If we have more than 4 moves, trim to the first 4
-			// Forced moves stay at the beginning
+
 			if (selectedMoves.size > 4) {
 				selectedMoves.subList(4, selectedMoves.size).clear()
 			}
 
-			// Apply the selected moves
+
 			for (i in selectedMoves.indices) {
 				val moveName = selectedMoves[i].lowercase()
 				val moveTemplate = com.cobblemon.mod.common.api.moves.Moves.getByName(moveName)
@@ -364,7 +383,7 @@ object CobbleSpawners : ModInitializer {
 				}
 			}
 
-			// Debug log
+
 			logDebug("Level: $level, Selected moves: $selectedMoves", "cobblespawners")
 		}
 
@@ -382,26 +401,26 @@ object CobbleSpawners : ModInitializer {
 			pokemonEntity.pitch
 		)
 
-		// --- New: Initialize the wander goal (Experimental) ---
+
 		val spawnerData = CobbleSpawnersConfig.getSpawner(spawnerPos)
 		if (spawnerData != null) {
 			val wanderingSettings = spawnerData.wanderingSettings
-			// Check the specific spawner's wandering setting before adding the goal
+
 			if (wanderingSettings != null) {
-				if (wanderingSettings.enabled) { // Check if enabled before adding
+				if (wanderingSettings.enabled) {
 					val spawnerCenter = Vec3d.ofCenter(spawnerPos)
-					val speed = 1.0 // Or configure speed if needed
+					val speed = 1.0
 					val wanderGoal = WanderBackToSpawnerGoal(
 						pokemonEntity,
 						spawnerCenter,
 						speed,
-						wanderingSettings // Pass the whole settings object
-						// tickDelay defaults to 10
+						wanderingSettings
+
 					)
-					// Check if goal already exists (less likely here, but safe)
+
 					val goalSelector = (pokemonEntity as MobEntityAccessor).getGoalSelector()
 					if (goalSelector.goals.none { it.goal is WanderBackToSpawnerGoal }) {
-						goalSelector.add(0, wanderGoal) // Priority 0 is high
+						goalSelector.add(0, wanderGoal)
 					}
 				}
 			}
@@ -436,18 +455,16 @@ object CobbleSpawners : ModInitializer {
 	private fun buildPropertiesString(
 		sanitizedName: String,
 		level: Int,
-		isShiny: Boolean, // no longer used; aspects from the config are used instead
+		isShiny: Boolean,
 		entry: PokemonSpawnEntry
 	): String {
 		val builder = StringBuilder(sanitizedName).append(" level=$level")
 
-		// Append each aspect from the config using the aspect=value format
 		entry.aspects.forEach { aspect ->
-			// Check if the aspect already has a special format (contains "=")
+
 			if (aspect.contains("=")) {
 				builder.append(" ${aspect.lowercase()}")
 			} else {
-				// Use the aspect=value format instead of value=true
 				builder.append(" aspect=${aspect.lowercase()}")
 			}
 		}
@@ -466,7 +483,6 @@ object CobbleSpawners : ModInitializer {
 				if (matchedForm != null) {
 					if (matchedForm.aspects.isNotEmpty()) {
 						matchedForm.aspects.forEach { aspect ->
-							// Apply form aspects using the aspect=value format
 							builder.append(" aspect=${aspect.lowercase()}")
 						}
 					} else {
@@ -523,26 +539,26 @@ object CobbleSpawners : ModInitializer {
 	}
 
 	private fun selectPokemonByWeight(eligible: List<PokemonSpawnEntry>, totalWeight: Double): PokemonSpawnEntry? {
-		// Wrap the net.minecraft random instance in a kotlin.random.Random adapter.
+
 		val kotlinRandom = object : kotlin.random.Random() {
 			override fun nextBits(bitCount: Int): Int = random.nextInt() and ((1 shl bitCount) - 1)
 			override fun nextDouble(): Double = random.nextDouble()
 		}
 
-		// Partition eligible Pokémon into independent and competitive groups.
+
 		val independentEntries = eligible.filter { it.spawnChanceType == SpawnChanceType.INDEPENDENT }
 		val competitiveEntries = eligible.filter { it.spawnChanceType == SpawnChanceType.COMPETITIVE }
 
-		// For independent entries, each spawns with an absolute chance.
+
 		val independentSuccesses = independentEntries.filter { entry ->
 			random.nextDouble() * 100 <= entry.spawnChance
 		}
 		if (independentSuccesses.isNotEmpty()) {
-			// Randomly pick one from the successful independent entries.
+
 			return independentSuccesses.random(kotlinRandom)
 		}
 
-		// Otherwise, use weighted selection for competitive entries.
+
 		val competitiveTotalWeight = competitiveEntries.sumOf { it.spawnChance }
 		if (competitiveTotalWeight <= 0) return null
 		val randValue = kotlinRandom.nextDouble() * competitiveTotalWeight
@@ -575,7 +591,7 @@ object CobbleSpawners : ModInitializer {
 
 	fun computeValidSpawnPositions(world: ServerWorld, data: SpawnerData): Map<String, List<BlockPos>> {
 		val spawnerPos = data.spawnerPos
-		val spawnRadius = data.spawnRadius ?: SpawnRadius() // Use default if null
+		val spawnRadius = data.spawnRadius ?: SpawnRadius()
 		val map = mutableMapOf<String, MutableList<BlockPos>>()
 		SpawnLocationType.values().forEach { map[it.name] = mutableListOf() }
 
@@ -670,14 +686,5 @@ object CobbleSpawners : ModInitializer {
 		SURFACE, UNDERGROUND, WATER, ALL
 	}
 
-	/**
-	 * Recalculate spawn positions for all spawners.
-	 */
-	fun recalculateAllSpawnPositions(server: MinecraftServer) {
-		for ((pos, data) in CobbleSpawnersConfig.spawners) {
-			val world = server.getWorld(parseDimension(data.dimension)) ?: continue
-			val newPositions = computeValidSpawnPositions(world, data)
-			spawnerValidPositions[pos] = newPositions
-		}
-	}
+
 }

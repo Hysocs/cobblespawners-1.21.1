@@ -18,23 +18,24 @@ import net.minecraft.util.ActionResult
 import net.minecraft.util.Hand
 import net.minecraft.util.hit.BlockHitResult
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.ChunkPos
 import net.minecraft.world.World
+import org.slf4j.LoggerFactory
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 object SpawnerBlockEvents {
-
+    private val logger = LoggerFactory.getLogger("cobblespawners")
     fun registerEvents() {
         registerUseBlockCallback()
         registerBlockBreakCallback()
     }
 
-    /**
-     * A simple helper that uses BlanketUtils CommandManager to check if a player has a given permission,
-     * falling back to OP-level checks if no permissions system is installed.
-     */
+
     private fun hasPermission(player: ServerPlayerEntity, permission: String, requiredLevel: Int): Boolean {
-        // Convert player to ServerCommandSource via player.commandSource
         val source = player.commandSource
-        // BlanketUtils command manager checks both permission mods and OP level
         return CommandManager.hasPermissionOrOp(source, permission, requiredLevel, requiredLevel)
     }
 
@@ -50,7 +51,6 @@ object SpawnerBlockEvents {
                 val itemInHand = player.getStackInHand(hand)
                 val modelData = itemInHand.get(DataComponentTypes.CUSTOM_MODEL_DATA)
 
-                // Check for custom spawner placement
                 if (
                     itemInHand.item == Items.SPAWNER &&
                     modelData != null &&
@@ -66,12 +66,10 @@ object SpawnerBlockEvents {
                     }
                 }
 
-                // Check for spawner block right-click to open GUI
                 if (
                     blockState.block == Blocks.SPAWNER &&
                     CobbleSpawnersConfig.spawners.containsKey(blockPos)
                 ) {
-                    // Swapped old CommandRegistrar.hasPermission to our helper
                     if (hasPermission(player, "CobbleSpawners.Edit", 2)) {
                         SpawnerPokemonSelectionGui.openSpawnerGui(player, blockPos)
                         return@register ActionResult.SUCCESS
@@ -87,7 +85,7 @@ object SpawnerBlockEvents {
     /** Generates the next available spawner name in the sequence "spawner_<number>". */
     private fun getNextSpawnerName(): String {
         val existingNumbers = CobbleSpawnersConfig.spawners.values
-            .mapNotNull { it.spawnerName }
+            .map { it.spawnerName }
             .filter { it.startsWith("spawner_") }
             .mapNotNull { it.removePrefix("spawner_").toIntOrNull() }
             .toSet()
@@ -105,46 +103,86 @@ object SpawnerBlockEvents {
         pos: BlockPos,
         itemInHand: ItemStack
     ) {
-        // Check permissions
+
         if (!hasPermission(player, "CobbleSpawners.Place", 2)) {
             player.sendMessage(Text.literal("You don't have permission to place a custom spawner."), false)
             return
         }
 
-        // Check if a spawner already exists at this location
+
         if (CobbleSpawnersConfig.spawners.containsKey(pos)) {
             player.sendMessage(Text.literal("A spawner already exists at this location!"), false)
             return
         }
 
-        // Clear liquid blocks if present
+
         val blockState = world.getBlockState(pos)
         if (blockState.block == Blocks.WATER || blockState.block == Blocks.LAVA) {
             world.setBlockState(pos, Blocks.AIR.defaultState)
         }
         world.setBlockState(pos, Blocks.SPAWNER.defaultState)
 
-        // Prepare dimension and Gson instance
+
         val dimensionString = "${world.registryKey.value.namespace}:${world.registryKey.value.path}"
         val gson = com.google.gson.Gson()
 
-        // Generate the next sequential spawner name
+
         val spawnerName = getNextSpawnerName()
 
-        // Retrieve and process custom NBT data
+
         val nbtComponent = itemInHand.get(DataComponentTypes.CUSTOM_DATA)
         val spawnerData: SpawnerData = if (nbtComponent != null) {
-            val nbt = nbtComponent.getNbt() // Retrieve the NBT compound
-            val configJson = nbt.getString("CobbleSpawnerConfig")
-            val loadedData = gson.fromJson(configJson, SpawnerData::class.java)
-            // Use the new sequential name, but copy other settings from the original
-            loadedData.copy(
+            val nbt = nbtComponent.getNbt()
+            var configJson: String? = null
+
+
+            if (nbt.contains("CobbleSpawnerConfigCompressed")) {
+                val compressedData = nbt.getByteArray("CobbleSpawnerConfigCompressed")
+                try {
+                    val inputStream = ByteArrayInputStream(compressedData)
+                    configJson = GZIPInputStream(inputStream).bufferedReader().use { it.readText() }
+                } catch (e: Exception) {
+                    logger.error("Failed to decompress spawner config from item!", e)
+                    player.sendMessage(Text.literal("§cError: Could not read compressed spawner data."), false)
+
+                }
+            }
+
+            else if (nbt.contains("CobbleSpawnerConfig")) {
+                configJson = nbt.getString("CobbleSpawnerConfig")
+            }
+
+            val loadedData = if (configJson != null) {
+                try {
+                    gson.fromJson(configJson, SpawnerData::class.java)
+                } catch (e: Exception) {
+                    logger.error("Failed to parse spawner JSON from item!", e)
+                    player.sendMessage(Text.literal("§cError: Could not parse spawner JSON data."), false)
+                    null
+                }
+            } else {
+                null
+            }
+
+            loadedData?.copy(
                 spawnerPos = pos,
                 spawnerName = spawnerName,
                 dimension = dimensionString
             )
+                ?: SpawnerData(
+                    spawnerPos = pos,
+                    spawnerName = spawnerName,
+                    selectedPokemon = mutableListOf(),
+                    dimension = dimensionString,
+                    spawnTimerTicks = 200,
+                    spawnRadius = SpawnRadius(width = 4, height = 4),
+                    spawnLimit = 4,
+                    spawnAmountPerSpawn = 1,
+                    visible = true,
+                    wanderingSettings = WanderingSettings()
+                )
         } else {
-            // Default spawner data with the sequential name
+
             SpawnerData(
                 spawnerPos = pos,
                 spawnerName = spawnerName,
@@ -155,17 +193,23 @@ object SpawnerBlockEvents {
                 spawnLimit = 4,
                 spawnAmountPerSpawn = 1,
                 visible = true,
-                wanderingSettings = WanderingSettings() // Include default wandering settings
+                wanderingSettings = WanderingSettings()
             )
         }
 
-        // Register the spawner
         CobbleSpawnersConfig.spawners[pos] = spawnerData
         CobbleSpawnersConfig.config.spawners.add(spawnerData)
         CobbleSpawnersConfig.saveSpawnerData()
         CobbleSpawnersConfig.saveConfigBlocking()
 
-        // Notify the player and decrement the item if not in creative mode
+        if (spawnerData.forceChunkLoading) {
+            if (world is ServerWorld) {
+                val chunkPos = ChunkPos(pos)
+                world.chunkManager.addTicket(CobbleSpawners.SPAWNER_TICKET_TYPE, chunkPos, spawnerData.chunkLoadRadius, pos)
+                logDebug("Added chunk ticket for spawner '${spawnerData.spawnerName}' at $pos", "cobblespawners")
+            }
+        }
+
         player.sendMessage(Text.literal("Custom spawner '${spawnerData.spawnerName}' placed at $pos!"), false)
         if (!player.abilities.creativeMode) {
             itemInHand.decrement(1)
@@ -175,6 +219,7 @@ object SpawnerBlockEvents {
     private fun registerBlockBreakCallback() {
         PlayerBlockBreakEvents.BEFORE.register { world, player, blockPos, blockState, _ ->
             val serverPlayer = player as? ServerPlayerEntity ?: return@register true
+            val spawnerData = CobbleSpawnersConfig.spawners[blockPos]
             if (world !is ServerWorld) return@register true
 
             if (
@@ -185,8 +230,13 @@ object SpawnerBlockEvents {
                     serverPlayer.sendMessage(Text.literal("You don't have permission to remove this spawner."), false)
                     return@register false
                 }
+                if (spawnerData != null && spawnerData.forceChunkLoading) {
+                    val chunkPos = ChunkPos(blockPos)
+                    world.chunkManager.removeTicket(CobbleSpawners.SPAWNER_TICKET_TYPE, chunkPos, spawnerData.chunkLoadRadius, blockPos)
+                    logDebug("Removed chunk ticket for spawner '${spawnerData.spawnerName}' at $blockPos", "cobblespawners")
+                }
 
-                // Remove from both the map and config spawners list
+
                 CobbleSpawnersConfig.spawners.remove(blockPos)
                 CobbleSpawnersConfig.config.spawners.removeIf { it.spawnerPos == blockPos }
                 CobbleSpawnersConfig.saveSpawnerData()

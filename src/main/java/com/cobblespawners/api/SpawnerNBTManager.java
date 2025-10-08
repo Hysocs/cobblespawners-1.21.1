@@ -60,12 +60,15 @@ public class SpawnerNBTManager {
 
     public static List<UUID> getUUIDsForSpawner(ServerWorld world, BlockPos spawnerPos) {
         UUID spawnerUUID = createSpawnerUUID(spawnerPos);
-        // Instead of scanning within a limited area, we simply use our tracker.
         Set<UUID> tracked = SPAWNER_ENTITY_TRACKER.getOrDefault(spawnerUUID, Collections.emptySet());
         List<UUID> uuids = new ArrayList<>();
-        for (UUID uuid : tracked) {
+        Iterator<UUID> iterator = tracked.iterator();
+        while (iterator.hasNext()) {
+            UUID uuid = iterator.next();
             if (world.getEntity(uuid) != null) {
                 uuids.add(uuid);
+            } else {
+                iterator.remove(); // Clean up stale UUID
             }
         }
         return uuids;
@@ -75,9 +78,13 @@ public class SpawnerNBTManager {
         UUID spawnerUUID = createSpawnerUUID(spawnerPos);
         Set<UUID> tracked = SPAWNER_ENTITY_TRACKER.getOrDefault(spawnerUUID, Collections.emptySet());
         int count = 0;
-        for (UUID uuid : tracked) {
+        Iterator<UUID> iterator = tracked.iterator();
+        while (iterator.hasNext()) {
+            UUID uuid = iterator.next();
             if (world.getEntity(uuid) != null) {
                 count++;
+            } else {
+                iterator.remove(); // Clean up stale UUID
             }
         }
         return count;
