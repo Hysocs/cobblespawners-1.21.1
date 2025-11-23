@@ -16,6 +16,7 @@ import net.minecraft.util.Formatting
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import net.minecraft.registry.Registries
 
 class CatchingTracker {
 
@@ -94,7 +95,7 @@ class CatchingTracker {
                         blockCapture = true
                     } else {
                         if (captureSettings.restrictCaptureToLimitedBalls) {
-                            val usedPokeBallIdentifier = pokeBallEntity.pokeBall.item().getRegistryEntry().registryKey().value.toString()
+                            val usedPokeBallIdentifier = Registries.ITEM.getId(pokeBallEntity.pokeBall.item()).toString()
                             val allowedPokeBalls = prepareAllowedPokeBallList(captureSettings.requiredPokeBalls)
 
                             if (!allowedPokeBalls.contains("ALL") && !allowedPokeBalls.any { allowed -> allowed.equals(usedPokeBallIdentifier, ignoreCase = true) }) {

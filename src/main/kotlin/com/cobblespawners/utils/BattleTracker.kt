@@ -7,7 +7,7 @@ import com.cobblespawners.utils.CobbleSpawnersConfig
 import com.cobblemon.mod.common.api.battles.model.PokemonBattle
 import com.cobblemon.mod.common.api.battles.model.actor.BattleActor
 import com.cobblemon.mod.common.api.events.CobblemonEvents
-//import com.cobblemon.mod.common.api.pokemon.stats.SidemodEvSource
+import com.cobblemon.mod.common.api.pokemon.stats.SidemodEvSource
 import com.cobblemon.mod.common.api.pokemon.stats.Stat
 import com.cobblemon.mod.common.api.pokemon.stats.Stats
 import com.cobblemon.mod.common.battles.BattleRegistry
@@ -332,7 +332,17 @@ class BattleTracker {
                 Stats.SPECIAL_DEFENCE to matchingEntry.evSettings.evSpecialDefense,
                 Stats.SPEED to matchingEntry.evSettings.evSpeed
             )
-            customEvs.forEach { (stat, ev) -> playerPokemon.evs.add(stat, ev) }
+
+            // Create the EV source for your sidemod
+            val evSource = SidemodEvSource("cobblespawners", playerPokemon)
+
+            // Apply EVs using the new API
+            customEvs.forEach { (stat, ev) ->
+                if (ev > 0) {
+                    playerPokemon.evs.add(stat, ev, evSource)
+                }
+            }
+
             logDebug("Applied custom EVs to ${playerPokemon.species.name}: $customEvs", "cobblespawners")
         } else {
             logDebug("No matching PokémonSpawnEntry with custom EVs for ${opponentPokemon.species.name} at $spawnerPos", "cobblespawners")
